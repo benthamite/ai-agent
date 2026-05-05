@@ -163,6 +163,28 @@
                            (ai-agent--discover-all-skills))
                    '("visible")))))
 
+;;;; Alerts
+
+(ert-deftest ai-agent-test-alert-sound-error-is-nonfatal ()
+  "Report sound playback errors without signaling."
+  (let ((sound-file (make-temp-file "ai-agent-test-sound" nil ".aiff"))
+        messages)
+    (unwind-protect
+        (let ((ai-agent-alert-style 'sound)
+              (ai-agent-alert-sound sound-file))
+          (cl-letf (((symbol-function 'play-sound-file)
+                     (lambda (_file) (error "no sound support")))
+                    ((symbol-function 'message)
+                     (lambda (format-string &rest args)
+                       (push (apply #'format format-string args) messages))))
+            (should (condition-case nil
+                        (progn
+                          (ai-agent--alert-sound)
+                          t)
+                      (error nil)))
+            (should (member "AI alert sound failed: no sound support" messages))))
+      (delete-file sound-file))))
+
 (ert-deftest ai-agent-test-parse-skill-frontmatter-argument-metadata ()
   "Parse shared skill argument metadata from frontmatter."
   (let ((file (make-temp-file "skill" nil ".md")))

@@ -630,7 +630,11 @@ configured alert style."
           (message "AI alert sound file not found: %s" sound)
         (cond
          ((fboundp 'play-sound-file)
-          (play-sound-file sound))
+          (condition-case err
+              (play-sound-file sound)
+            (error
+             (message "AI alert sound failed: %s"
+                      (error-message-string err)))))
          ((and ai-agent-alert-sound-player
                (executable-find ai-agent-alert-sound-player))
           (start-process "ai-agent-alert-sound" nil
