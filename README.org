@@ -63,6 +63,9 @@ The user option ~ai-agent-sigwinch-delay~ is a number of seconds and defaults to
 #+vindex: ai-agent-claude-copilot-enabled
 #+vindex: ai-agent-claude-accounts
 #+vindex: ai-agent-claude-account-file
+#+vindex: ai-agent-claude-settings-file
+#+vindex: ai-agent-claude-hook-wrapper
+#+vindex: ai-agent-claude-statusline-script
 #+vindex: ai-agent-claude-batch-allowed-tools
 #+vindex: ai-agent-claude-batch-permission-mode
 #+vindex: ai-agent-claude-batch-max-turns
@@ -81,6 +84,8 @@ Status and usage polling are controlled by integer intervals. ~ai-agent-claude-s
 Batch execution options are passed to =claude -p=. ~ai-agent-claude-batch-permission-mode~ defaults to ="auto"=, ~ai-agent-claude-batch-max-turns~ defaults to =30=, and the allowed tool, model, and appended-system-prompt options let you narrow or expand what non-interactive Claude tasks may do.
 
 Branch and buffer safety options default conservatively. ~ai-agent-claude-warn-kill-with-branches~ defaults to ~t~ and warns before killing a session that belongs to a branch tree. ~ai-agent-claude-fork-worktree-directory~ defaults to a cache directory outside Google Drive so isolated branch worktrees do not interfere with sync.
+
+Claude hook setup is explicit. ~ai-agent-claude-settings-file~ names the settings file updated by ~ai-agent-claude-setup-config~ and the individual ensure commands. ~ai-agent-claude-hook-wrapper~ points to the upstream =claude-code= hook wrapper, while ~ai-agent-claude-statusline-script~ points to the bundled statusline helper. Loading the backend does not modify Claude Code configuration.
 
 ** Codex backend
 :PROPERTIES:
@@ -150,13 +155,14 @@ The commands ~ai-agent-handoff~, ~ai-agent-audit-project~, ~ai-agent-debug-backt
 #+findex: ai-agent-claude-ensure-statusline-config
 #+findex: ai-agent-claude-ensure-stop-hook-config
 #+findex: ai-agent-claude-ensure-notification-hook-config
+#+findex: ai-agent-claude-setup-config
 The Claude commands expose workflows that are specific to Claude Code. ~ai-agent-claude-start-or-switch~ starts Claude under the selected account or opens the unified switcher. ~ai-agent-claude-select-account~ persists an account choice, and ~ai-agent-claude-init-account~ prepares a new account directory with shared configuration files and symlinks.
 
 ~ai-agent-claude-run-skill~, ~ai-agent-claude-batch-todos~, and ~ai-agent-claude-send-todo-at-point~ use non-interactive or interactive Claude sessions to run structured work. Batch TODO processing extracts Org headings, formats each heading and body as a prompt, runs entries sequentially, and records a summary buffer.
 
 ~ai-agent-claude-create-branch~ creates a new Claude branch from the current session. With isolated branching it creates a git worktree under ~ai-agent-claude-fork-worktree-directory~ and links the branch session metadata into that project. ~ai-agent-claude-switch-branch~ displays the branch tree and switches to, or resumes, the selected session.
 
-The setup commands ensure that Claude's statusline, Stop hook, and Notification hook are present in =~/.claude/settings.json=. The backend runs them automatically when loaded, but they are also interactive so you can repair missing configuration manually.
+The setup command ~ai-agent-claude-setup-config~ ensures that Claude's statusline, Stop hook, and Notification hook are present in =~/.claude/settings.json=. The backend does not run setup automatically when loaded; run the setup command explicitly when installing or repairing hook configuration.
 
 ** Codex commands
 :PROPERTIES:

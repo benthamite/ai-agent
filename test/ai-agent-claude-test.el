@@ -469,37 +469,46 @@
   (with-temp-buffer
     (should-not (ai-agent-claude--has-stop-hook-p))))
 
-;;;; Insert statusline entry
+;;;; Settings setup
 
-(ert-deftest ai-agent-claude-test-insert-statusline-entry ()
-  "Insert statusLine JSON before the final closing brace."
-  (with-temp-buffer
-    (insert "{\n    \"someKey\": true\n}")
-    (let ((temp-file (make-temp-file "statusline-test" nil ".json"))
-          (ai-agent-claude--statusline-script "/path/to/script.sh"))
-      (unwind-protect
-          (progn
-            (ai-agent-claude--insert-statusline-entry temp-file)
-            (should (string-match-p "\"statusLine\"" (buffer-string)))
-            (should (string-match-p "/path/to/script.sh" (buffer-string)))
-            ;; The closing brace should still be present
-            (should (string-match-p "}$" (string-trim (buffer-string)))))
-        (delete-file temp-file)))))
+(defun ai-agent-claude-test--executable ()
+  "Return a temporary executable file path."
+  (let ((file (make-temp-file "ai-agent-exec")))
+    (set-file-modes file #o755)
+    file))
 
-(ert-deftest ai-agent-claude-test-insert-statusline-entry-structure ()
-  "Inserted statusLine has expected JSON structure."
-  (with-temp-buffer
-    (insert "{\n    \"existing\": 1\n}")
-    (let ((temp-file (make-temp-file "statusline-test" nil ".json"))
-          (ai-agent-claude--statusline-script "/test/script"))
-      (unwind-protect
-          (progn
-            (ai-agent-claude--insert-statusline-entry temp-file)
-            (let ((content (buffer-string)))
-              (should (string-match-p "\"type\": \"command\"" content))
-              (should (string-match-p "\"padding\": 0" content))
-              (should (string-match-p "\"command\": \"/test/script\"" content))))
-        (delete-file temp-file)))))
+(ert-deftest ai-agent-claude-test-ensure-statusline-config-valid-empty-json ()
+  "Write a valid statusLine object into an empty settings object."
+  (let ((settings (make-temp-file "statusline-test" nil ".json"))
+        (script (ai-agent-claude-test--executable)))
+    (unwind-protect
+        (let ((ai-agent-claude-statusline-script script))
+          (with-temp-file settings (insert "{}"))
+          (should (ai-agent-claude-ensure-statusline-config settings))
+          (let* ((data (ai-agent-claude--read-json-object settings))
+                 (statusline (gethash "statusLine" data)))
+            (should (hash-table-p statusline))
+            (should (equal (gethash "command" statusline) script))
+            (should (= (gethash "padding" statusline) 0))))
+      (delete-file settings)
+      (delete-file script))))
+
+(ert-deftest ai-agent-claude-test-ensure-hooks-config-valid-empty-json ()
+  "Write Stop and Notification hooks into an empty settings object."
+  (let ((settings (make-temp-file "hooks-test" nil ".json"))
+        (wrapper (ai-agent-claude-test--executable)))
+    (unwind-protect
+        (let ((ai-agent-claude-hook-wrapper wrapper))
+          (with-temp-file settings (insert "{}"))
+          (should (ai-agent-claude-ensure-stop-hook-config settings))
+          (should (ai-agent-claude-ensure-notification-hook-config settings))
+          (let* ((data (ai-agent-claude--read-json-object settings))
+                 (hooks (gethash "hooks" data)))
+            (should (hash-table-p hooks))
+            (should (gethash "Stop" hooks))
+            (should (gethash "Notification" hooks))))
+      (delete-file settings)
+      (delete-file wrapper))))
 
 ;;;; Batch collect todos
 

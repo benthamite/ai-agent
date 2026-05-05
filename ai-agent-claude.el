@@ -136,13 +136,19 @@ read by `ai-agent-claude-account-env'.")
 Set by `ai-agent-claude--capture-buffer-account' via
 `claude-code-start-hook'.")
 
-(defconst ai-agent-claude--hook-wrapper
-  (expand-file-name
-   "bin/claude-code-hook-wrapper"
-   (expand-file-name "../../repos/claude-code"
-                     (file-name-directory
-                      (locate-library "claude-code"))))
-  "Absolute path to the claude-code hook wrapper script.")
+(defcustom ai-agent-claude-settings-file
+  (expand-file-name "settings.json" "~/.claude/")
+  "Claude Code settings file updated by setup commands."
+  :type 'file
+  :group 'ai-agent-claude)
+
+(defcustom ai-agent-claude-hook-wrapper
+  (when-let* ((library (locate-library "claude-code")))
+    (expand-file-name "bin/claude-code-hook-wrapper"
+                      (file-name-directory library)))
+  "Absolute path to the claude-code hook wrapper script."
+  :type '(choice (const :tag "Unavailable" nil) file)
+  :group 'ai-agent-claude)
 
 (defconst ai-agent-claude--hooks-directory
   (file-truename
@@ -155,12 +161,14 @@ Set by `ai-agent-claude--capture-buffer-account' via
 (defconst ai-agent-claude--status-directory "/tmp/claude-code-status/"
   "Directory where the statusline script writes JSON status files.")
 
-(defconst ai-agent-claude--statusline-script
+(defcustom ai-agent-claude-statusline-script
   (expand-file-name "etc/claude-code-statusline.sh"
                     (file-name-directory
                      (file-truename
                       (or load-file-name buffer-file-name))))
-  "Absolute path to the statusline shell script.")
+  "Absolute path to the bundled Claude Code statusline script."
+  :type 'file
+  :group 'ai-agent-claude)
 
 (defvar-local ai-agent-claude--status-data nil
   "Parsed status plist for the current Claude buffer.")
@@ -2323,173 +2331,208 @@ Return non-nil when PATH was written."
   (ai-agent-sync-theme-now)
   nil)
 
-;;;;; Auto-setup
+;;;;; Setup
 
-(defun ai-agent-claude-ensure-statusline-config ()
-  "Ensure `~/.claude/settings.json' has a `statusLine' entry.
-Adds the entry pointing to the bundled shell script if absent."
+;;;###autoload
+(defun ai-agent-claude-setup-config ()
+  "Ensure Claude Code settings contain ai-agent statusline and hooks."
   (interactive)
-  (let ((settings-file (expand-file-name "~/.claude/settings.json")))
-    (when (file-exists-p settings-file)
-      (with-temp-buffer
-        (insert-file-contents settings-file)
-        (unless (ai-agent-claude--has-statusline-key-p)
-          (ai-agent-claude--insert-statusline-entry settings-file))))))
+  (ai-agent-claude-ensure-statusline-config)
+  (ai-agent-claude-ensure-stop-hook-config)
+  (ai-agent-claude-ensure-notification-hook-config)
+  (message "ai-agent-claude: updated %s" ai-agent-claude-settings-file))
 
-(defun ai-agent-claude--has-statusline-key-p ()
-  "Return non-nil if the current buffer has a `statusLine' JSON key."
-  (goto-char (point-min))
-  (search-forward "\"statusLine\"" nil t))
-
-(defun ai-agent-claude--insert-statusline-entry (file)
-  "Insert a `statusLine' entry into the JSON settings FILE.
-Finds the last `}' and inserts the entry before it."
-  (goto-char (point-max))
-  (search-backward "}")
-  (insert ",\n    \"statusLine\": {\n"
-          "        \"type\": \"command\",\n"
-          "        \"command\": \""
-          ai-agent-claude--statusline-script
-          "\",\n"
-          "        \"padding\": 0\n"
-          "    }\n")
-  (write-region (point-min) (point-max) file nil 'quiet))
-
-(defun ai-agent-claude-ensure-stop-hook-config ()
-  "Ensure `~/.claude/settings.json' has a `Stop' hook.
-Adds the hook entry pointing to the bundled wrapper script if
-absent."
+(defun ai-agent-claude-ensure-statusline-config (&optional file)
+  "Ensure FILE has a `statusLine' entry.
+FILE defaults to `ai-agent-claude-settings-file'."
   (interactive)
-  (let ((settings-file (expand-file-name "~/.claude/settings.json")))
-    (when (file-exists-p settings-file)
-      (with-temp-buffer
-        (insert-file-contents settings-file)
-        (unless (ai-agent-claude--has-stop-hook-p)
-          (ai-agent-claude--insert-stop-hook settings-file))))))
+  (ai-agent-claude--update-settings
+   (or file ai-agent-claude-settings-file)
+   #'ai-agent-claude--ensure-statusline))
 
-(defun ai-agent-claude--has-stop-hook-p ()
-  "Return non-nil if the current buffer has a `Stop' hook."
-  (goto-char (point-min))
-  (search-forward "\"Stop\"" nil t))
-
-(defun ai-agent-claude--insert-stop-hook (file)
-  "Insert a `Stop' hook entry into the JSON settings FILE.
-Adds a `hooks' object if none exists, or appends to the existing
-one."
-  (goto-char (point-min))
-  (if (search-forward "\"hooks\"" nil t)
-      (ai-agent-claude--append-to-existing-hooks)
-    (ai-agent-claude--insert-new-hooks-section))
-  (write-region (point-min) (point-max) file nil 'quiet))
-
-(defun ai-agent-claude--append-to-existing-hooks ()
-  "Append a `Stop' entry to the existing `hooks' object."
-  (search-forward "{")
-  (insert "\n        \"Stop\": [\n"
-          "            {\n"
-          "                \"matcher\": \"\",\n"
-          "                \"hooks\": [\n"
-          "                    {\n"
-          "                        \"type\": \"command\",\n"
-          "                        \"command\": \""
-          ai-agent-claude--hook-wrapper
-          " stop\"\n"
-          "                    }\n"
-          "                ]\n"
-          "            }\n"
-          "        ],"))
-
-(defun ai-agent-claude--insert-new-hooks-section ()
-  "Insert a new `hooks' section with a `Stop' entry."
-  (goto-char (point-max))
-  (search-backward "}")
-  (insert ",\n    \"hooks\": {\n"
-          "        \"Stop\": [\n"
-          "            {\n"
-          "                \"matcher\": \"\",\n"
-          "                \"hooks\": [\n"
-          "                    {\n"
-          "                        \"type\": \"command\",\n"
-          "                        \"command\": \""
-          ai-agent-claude--hook-wrapper
-          " stop\"\n"
-          "                    }\n"
-          "                ]\n"
-          "            }\n"
-          "        ]\n"
-          "    }\n"))
-
-(defun ai-agent-claude-ensure-notification-hook-config ()
-  "Ensure `~/.claude/settings.json' has a `Notification' hook.
-Adds the hook entry pointing to the notification forwarding script
-if absent or empty."
+(defun ai-agent-claude-ensure-stop-hook-config (&optional file)
+  "Ensure FILE has a Claude Code `Stop' hook.
+FILE defaults to `ai-agent-claude-settings-file'."
   (interactive)
-  (let ((settings-file (expand-file-name "~/.claude/settings.json")))
-    (when (file-exists-p settings-file)
-      (with-temp-buffer
-        (insert-file-contents settings-file)
-        (unless (ai-agent-claude--has-notification-hook-p)
-          (ai-agent-claude--insert-notification-hook settings-file))))))
+  (ai-agent-claude--update-settings
+   (or file ai-agent-claude-settings-file)
+   #'ai-agent-claude--ensure-stop-hook))
 
-(defun ai-agent-claude--has-notification-hook-p ()
-  "Return non-nil if the current buffer has a configured Notification hook."
-  (goto-char (point-min))
-  (search-forward "notify-emacs-notification" nil t))
+(defun ai-agent-claude-ensure-notification-hook-config (&optional file)
+  "Ensure FILE has a Claude Code `Notification' hook.
+FILE defaults to `ai-agent-claude-settings-file'."
+  (interactive)
+  (ai-agent-claude--update-settings
+   (or file ai-agent-claude-settings-file)
+   #'ai-agent-claude--ensure-notification-hook))
+
+(defun ai-agent-claude--update-settings (file updater)
+  "Read JSON settings FILE, apply UPDATER, and write when changed."
+  (let* ((settings (ai-agent-claude--read-json-object file))
+         (before (json-serialize settings)))
+    (funcall updater settings)
+    (unless (equal before (json-serialize settings))
+      (make-directory (file-name-directory file) t)
+      (ai-agent-claude--write-claude-json file settings)
+      t)))
+
+(defun ai-agent-claude--read-json-object (file)
+  "Read FILE as a JSON object, or return an empty object if missing."
+  (if (not (file-exists-p file))
+      (make-hash-table :test #'equal)
+    (let ((data (with-temp-buffer
+                  (insert-file-contents file)
+                  (json-parse-buffer))))
+      (unless (hash-table-p data)
+        (error "Expected JSON object in %s" file))
+      data)))
+
+(defun ai-agent-claude--ensure-statusline (settings)
+  "Ensure SETTINGS has an ai-agent statusline command."
+  (unless (gethash "statusLine" settings)
+    (puthash "statusLine" (ai-agent-claude--statusline-entry) settings)))
+
+(defun ai-agent-claude--statusline-entry ()
+  "Return the JSON object for the Claude Code statusline command."
+  (ai-agent-claude--require-executable ai-agent-claude-statusline-script)
+  (let ((entry (make-hash-table :test #'equal)))
+    (puthash "type" "command" entry)
+    (puthash "command" ai-agent-claude-statusline-script entry)
+    (puthash "padding" 0 entry)
+    entry))
+
+(defun ai-agent-claude--ensure-stop-hook (settings)
+  "Ensure SETTINGS has the ai-agent Stop hook."
+  (ai-agent-claude--ensure-hook
+   settings "Stop" (ai-agent-claude--stop-hook-command) nil))
+
+(defun ai-agent-claude--ensure-notification-hook (settings)
+  "Ensure SETTINGS has the ai-agent Notification hook."
+  (ai-agent-claude--ensure-hook
+   settings "Notification" (ai-agent-claude--notification-hook-command) 5))
+
+(defun ai-agent-claude--ensure-hook (settings name command timeout)
+  "Ensure SETTINGS hook NAME includes COMMAND with optional TIMEOUT."
+  (let* ((hooks (ai-agent-claude--ensure-hooks settings))
+         (entries (ai-agent-claude--json-list (gethash name hooks))))
+    (unless (ai-agent-claude--hook-command-present-p entries command)
+      (puthash name
+               (vconcat entries
+                        (vector (ai-agent-claude--hook-entry command timeout)))
+               hooks))))
+
+(defun ai-agent-claude--ensure-hooks (settings)
+  "Return SETTINGS' `hooks' object, creating it when needed."
+  (let ((hooks (gethash "hooks" settings)))
+    (unless (hash-table-p hooks)
+      (setq hooks (make-hash-table :test #'equal))
+      (puthash "hooks" hooks settings))
+    hooks))
+
+(defun ai-agent-claude--json-list (value)
+  "Return JSON array VALUE as a list."
+  (cond
+   ((vectorp value) (append value nil))
+   ((listp value) value)
+   (t nil)))
+
+(defun ai-agent-claude--hook-command-present-p (entries command)
+  "Return non-nil if ENTRIES already contain hook COMMAND."
+  (cl-some
+   (lambda (entry)
+     (cl-some
+      (lambda (hook)
+        (and (hash-table-p hook)
+             (equal (gethash "command" hook) command)))
+      (ai-agent-claude--json-list (and (hash-table-p entry)
+                                       (gethash "hooks" entry)))))
+   entries))
+
+(defun ai-agent-claude--hook-entry (command &optional timeout)
+  "Return a Claude Code hook entry object for COMMAND.
+TIMEOUT, when non-nil, is written as the hook command timeout."
+  (let ((entry (make-hash-table :test #'equal)))
+    (puthash "matcher" "" entry)
+    (puthash "hooks" (vector (ai-agent-claude--hook-command command timeout))
+             entry)
+    entry))
+
+(defun ai-agent-claude--hook-command (command &optional timeout)
+  "Return a Claude Code command hook object for COMMAND.
+TIMEOUT, when non-nil, is written as the hook command timeout."
+  (let ((hook (make-hash-table :test #'equal)))
+    (puthash "type" "command" hook)
+    (puthash "command" command hook)
+    (when timeout
+      (puthash "timeout" timeout hook))
+    hook))
+
+(defun ai-agent-claude--stop-hook-command ()
+  "Return the command string for the Stop hook."
+  (format "%s stop"
+          (shell-quote-argument (ai-agent-claude--hook-wrapper))))
+
+(defun ai-agent-claude--hook-wrapper ()
+  "Return a verified path to `claude-code-hook-wrapper'."
+  (ai-agent-claude--require-executable ai-agent-claude-hook-wrapper))
 
 (defun ai-agent-claude--notification-hook-command ()
   "Return the command string for the Notification hook in settings.json."
-  (format "%s %s"
-          (shell-quote-argument
-           (expand-file-name "fire-and-forget.sh"
-                             ai-agent-claude--hooks-directory))
-          (shell-quote-argument
-           (expand-file-name "notify-emacs-notification.sh"
-                             ai-agent-claude--hooks-directory))))
+  (let ((fire-and-forget
+         (expand-file-name "fire-and-forget.sh"
+                           ai-agent-claude--hooks-directory))
+        (notification
+         (expand-file-name "notify-emacs-notification.sh"
+                           ai-agent-claude--hooks-directory)))
+    (ai-agent-claude--require-executable fire-and-forget)
+    (ai-agent-claude--require-executable notification)
+    (format "%s %s"
+            (shell-quote-argument fire-and-forget)
+            (shell-quote-argument notification))))
 
-(defun ai-agent-claude--insert-notification-hook (file)
-  "Insert or fill the Notification hook entry in the JSON settings FILE."
-  (let ((cmd (ai-agent-claude--notification-hook-command)))
+(defun ai-agent-claude--require-executable (file)
+  "Return FILE or signal an error if it is not executable."
+  (unless (and file (file-executable-p file))
+    (error "Executable not found: %s" file))
+  file)
+
+(defun ai-agent-claude--has-statusline-key-p ()
+  "Return non-nil if the current buffer has a `statusLine' JSON key."
+  (when-let* ((settings (ai-agent-claude--parse-current-json-object)))
+    (gethash "statusLine" settings)))
+
+(defun ai-agent-claude--has-stop-hook-p ()
+  "Return non-nil if the current buffer has a `Stop' hook."
+  (when-let* ((settings (ai-agent-claude--parse-current-json-object))
+              (hooks (gethash "hooks" settings)))
+    (and (hash-table-p hooks) (gethash "Stop" hooks))))
+
+(defun ai-agent-claude--has-notification-hook-p ()
+  "Return non-nil if the current buffer has a configured Notification hook."
+  (when-let* ((settings (ai-agent-claude--parse-current-json-object))
+              (hooks (gethash "hooks" settings))
+              ((hash-table-p hooks))
+              (entries (ai-agent-claude--json-list
+                        (gethash "Notification" hooks))))
+    (cl-some
+     (lambda (entry)
+       (cl-some
+        (lambda (hook)
+          (and (hash-table-p hook)
+               (string-match-p
+                "notify-emacs-notification"
+                (or (gethash "command" hook) ""))))
+        (ai-agent-claude--json-list (gethash "hooks" entry))))
+     entries)))
+
+(defun ai-agent-claude--parse-current-json-object ()
+  "Parse the current buffer as a JSON object, returning nil on failure."
+  (save-excursion
     (goto-char (point-min))
-    (cond
-     ;; Empty Notification array — replace it
-     ((search-forward "\"Notification\": []" nil t)
-      (replace-match
-       (format (concat "\"Notification\": [\n"
-                       "      {\n"
-                       "        \"matcher\": \"\",\n"
-                       "        \"hooks\": [\n"
-                       "          {\n"
-                       "            \"type\": \"command\",\n"
-                       "            \"command\": \"%s\",\n"
-                       "            \"timeout\": 5\n"
-                       "          }\n"
-                       "        ]\n"
-                       "      }\n"
-                       "    ]")
-               cmd)
-       t))
-     ;; No Notification key — add to hooks section
-     ((progn (goto-char (point-min))
-             (search-forward "\"hooks\"" nil t))
-      (search-forward "{")
-      (insert (format (concat "\n        \"Notification\": [\n"
-                              "            {\n"
-                              "                \"matcher\": \"\",\n"
-                              "                \"hooks\": [\n"
-                              "                    {\n"
-                              "                        \"type\": \"command\",\n"
-                              "                        \"command\": \"%s\",\n"
-                              "                        \"timeout\": 5\n"
-                              "                    }\n"
-                              "                ]\n"
-                              "            }\n"
-                              "        ],")
-                      cmd))))
-    (write-region (point-min) (point-max) file nil 'quiet)))
-
-(ai-agent-claude-ensure-statusline-config)
-(ai-agent-claude-ensure-stop-hook-config)
-(ai-agent-claude-ensure-notification-hook-config)
+    (condition-case nil
+        (let ((data (json-parse-buffer)))
+          (and (hash-table-p data) data))
+      (error nil))))
 
 ;; Work around upstream bug: `claude-code--adjust-window-size-advice' crashes
 ;; when `claude-code--window-widths' is nil or void during redisplay.
