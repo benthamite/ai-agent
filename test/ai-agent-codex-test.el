@@ -100,11 +100,14 @@
 (ert-deftest ai-agent-codex-test-discover-skills-skips-non-invocable ()
   "Do not expose Codex skills marked `user-invocable: false'."
   (let* ((dir (make-temp-file "codex-skills" t))
+         (codex-home (make-temp-file "codex-home" t))
          (visible (expand-file-name "visible/SKILL.md" dir))
          (hidden (expand-file-name "hidden/SKILL.md" dir))
+         (process-environment
+          (cons (format "CODEX_HOME=%s" codex-home) process-environment))
          (ai-agent-codex-skill-directories (list dir)))
     (unwind-protect
-        (progn
+        (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil)))
           (make-directory (file-name-directory visible) t)
           (make-directory (file-name-directory hidden) t)
           (with-temp-file visible
@@ -114,7 +117,8 @@
           (should (equal (mapcar (lambda (skill) (plist-get skill :name))
                                  (ai-agent-codex--discover-skills))
                          '("visible"))))
-      (delete-directory dir t))))
+      (delete-directory dir t)
+      (delete-directory codex-home t))))
 
 (ert-deftest ai-agent-codex-test-build-exec-command ()
   "Build a current `codex exec' command line."
