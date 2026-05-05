@@ -1,0 +1,246 @@
+#+title: ai-agent: AI coding agent integration for Emacs
+#+author: Pablo Stafforini
+#+email: pablo@stafforini.com
+#+language: en
+#+options: ':t toc:t author:t email:t num:t
+#+startup: content
+#+export_file_name: ai-agent.info
+#+texinfo_filename: ai-agent.info
+#+texinfo_dir_category: Emacs misc features
+#+texinfo_dir_title: AI Agent: (ai-agent)
+#+texinfo_dir_desc: AI coding agent integration for Emacs
+
+This manual describes the features and customization options for the Emacs Lisp package =ai-agent.el=.
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: h:overview
+:END:
+
+=ai-agent.el= collects the Emacs integration layer for AI coding command-line tools. It provides a shared session model, a unified transient menu, notification handling, terminal helpers, and backend modules for Claude Code and Codex.
+
+The package is split into a small core and backend modules. The core file, =ai-agent.el=, is backend-agnostic: it knows how to register AI tools, find their buffers, dispatch shared commands, render backend icons, assign stable session keys, and present a single menu. =ai-agent-claude.el= integrates =claude-code.el= with Claude-specific account switching, status polling, usage polling, branch navigation, batch TODO processing, and hook setup. =ai-agent-codex.el= integrates =codex.el= with Codex-specific theme sync, skill execution, handoff, auditing, debugging, and modeline helpers.
+
+The main workflow is to load =ai-agent.el=, then require the backend modules you use. Once the Claude and Codex modules are loaded, =M-x ai-agent-menu= and =M-x ai-agent-start-or-switch= operate across both tools. Sessions are grouped by account when the backend exposes account metadata, highlighted when waiting for input, and disambiguated by project and instance name when several sessions share a directory.
+
+The package depends on =transient= for menus and =consult= for completion. The Claude backend expects =claude-code.el=, =paths.el=, and =agent-log.el=. The Codex backend expects =codex.el=. Optional integrations use packages such as =yasnippet=, =doom-modeline=, =copilot=, =gptel=, and =monet= when those are available.
+
+* User options
+:PROPERTIES:
+:CUSTOM_ID: h:user-options
+:END:
+
+** Shared session behavior
+:PROPERTIES:
+:CUSTOM_ID: h:shared-session-options
+:END:
+
+#+vindex: ai-agent-protect-buffers
+#+vindex: ai-agent-alert-on-ready
+#+vindex: ai-agent-alert-style
+#+vindex: ai-agent-alert-sound
+#+vindex: ai-agent-sync-theme
+#+vindex: ai-agent-sigwinch-delay
+The user option ~ai-agent-protect-buffers~ is a boolean that defaults to ~t~. When enabled, killing a live AI session buffer prompts for confirmation through ~ai-agent-protect-buffer~. Buffers whose processes have already exited are allowed to die without the prompt.
+
+The user option ~ai-agent-alert-on-ready~ is a boolean that defaults to ~nil~. When enabled, backend notification handlers can call ~ai-agent-notify~ to emit visual and/or audible alerts when a session is waiting for input. ~ai-agent-alert-style~ selects ~visual~, ~sound~, or ~both~; it defaults to ~both~. ~ai-agent-alert-sound~ is a file name and defaults to the macOS Glass sound.
+
+The user option ~ai-agent-sync-theme~ is a boolean that defaults to ~nil~. When enabled, theme changes in Emacs are persisted through each registered backend's theme-sync handler. This updates configuration files for new or restarted CLI sessions without sending theme commands into active terminal conversations.
+
+The user option ~ai-agent-sigwinch-delay~ is a number of seconds and defaults to =0.5=. It controls how long ~ai-agent-fix-rendering~ waits before sending =SIGWINCH= to a terminal process. Increase it if an AI CLI reads the terminal size before the =eat= window has settled.
+
+** Claude Code backend
+:PROPERTIES:
+:CUSTOM_ID: h:claude-options
+:END:
+
+#+vindex: ai-agent-claude-warn-kill-with-branches
+#+vindex: ai-agent-claude-fork-worktree-directory
+#+vindex: ai-agent-claude-log-directory
+#+vindex: ai-agent-claude-status-interval
+#+vindex: ai-agent-claude-usage-interval
+#+vindex: ai-agent-claude-usage-max-interval
+#+vindex: ai-agent-claude-copilot-enabled
+#+vindex: ai-agent-claude-accounts
+#+vindex: ai-agent-claude-account-file
+#+vindex: ai-agent-claude-batch-allowed-tools
+#+vindex: ai-agent-claude-batch-permission-mode
+#+vindex: ai-agent-claude-batch-max-turns
+#+vindex: ai-agent-claude-batch-system-prompt
+#+vindex: ai-agent-claude-batch-model
+#+vindex: ai-agent-claude-run-skill-model
+#+vindex: ai-agent-claude-audit-skills
+#+vindex: ai-agent-claude-audit-project-directories
+#+vindex: ai-agent-claude-org-todo-in-progress-keyword
+#+vindex: ai-agent-claude-debug-backtrace-model
+#+vindex: ai-agent-claude-debug-backtrace-backend
+The Claude backend options control account selection, session metadata, non-interactive execution, and branch workflows. ~ai-agent-claude-accounts~ is an alist of account names to Claude configuration directories, and ~ai-agent-claude-account-file~ stores the selected account across Emacs sessions. Use ~ai-agent-claude-select-account~ or the account infix in ~ai-agent-menu~ to switch accounts before starting a new session.
+
+Status and usage polling are controlled by integer intervals. ~ai-agent-claude-status-interval~ defaults to =5= seconds and reads status JSON emitted by the bundled statusline script. ~ai-agent-claude-usage-interval~ defaults to =300= seconds and backs off up to ~ai-agent-claude-usage-max-interval~, which defaults to =900= seconds.
+
+Batch execution options are passed to =claude -p=. ~ai-agent-claude-batch-permission-mode~ defaults to ="auto"=, ~ai-agent-claude-batch-max-turns~ defaults to =30=, and the allowed tool, model, and appended-system-prompt options let you narrow or expand what non-interactive Claude tasks may do.
+
+Branch and buffer safety options default conservatively. ~ai-agent-claude-warn-kill-with-branches~ defaults to ~t~ and warns before killing a session that belongs to a branch tree. ~ai-agent-claude-fork-worktree-directory~ defaults to a cache directory outside Google Drive so isolated branch worktrees do not interfere with sync.
+
+** Codex backend
+:PROPERTIES:
+:CUSTOM_ID: h:codex-options
+:END:
+
+#+vindex: ai-agent-codex-handoff-file
+#+vindex: ai-agent-codex-skill-directories
+#+vindex: ai-agent-codex-audit-skills
+#+vindex: ai-agent-codex-audit-project-directories
+#+vindex: ai-agent-codex-debug-backtrace-model
+#+vindex: ai-agent-codex-debug-backtrace-backend
+The Codex backend options control handoff, skill discovery, project auditing, and backtrace debugging. ~ai-agent-codex-handoff-file~ defaults to =/tmp/codex-handoff.md= and is read by ~ai-agent-codex-handoff~ after the Codex handoff skill writes next-session instructions.
+
+~ai-agent-codex-skill-directories~ is a list of additional directories scanned for Codex skills. The backend also scans standard Codex skill locations and project-local skill directories. ~ai-agent-codex-audit-skills~ defaults to the code, design, and interpretability audit skills, while ~ai-agent-codex-audit-project-directories~ stores completion candidates for the audit directory prompt.
+
+~ai-agent-codex-debug-backtrace-model~ and ~ai-agent-codex-debug-backtrace-backend~ configure the =gptel= request used by ~ai-agent-codex-debug-backtrace~ to identify likely culprit packages from an Emacs backtrace.
+
+* Commands
+:PROPERTIES:
+:CUSTOM_ID: h:commands
+:END:
+
+** Shared commands
+:PROPERTIES:
+:CUSTOM_ID: h:shared-commands
+:END:
+
+#+findex: ai-agent-menu
+#+findex: ai-agent-start-or-switch
+#+findex: ai-agent-jump-to-waiting
+#+findex: ai-agent-run-skill
+#+findex: ai-agent-handoff
+#+findex: ai-agent-audit-project
+#+findex: ai-agent-debug-backtrace
+#+findex: ai-agent-exit
+#+findex: ai-agent-restart
+#+findex: ai-agent-toggle-alert
+#+findex: ai-agent-fix-rendering
+#+findex: ai-agent-disable-scrollback-truncation
+#+findex: ai-agent-snippet-tab
+The command ~ai-agent-menu~ opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, alert toggles, and terminal maintenance. Backend modules append their own suffixes to the same menu when loaded.
+
+The command ~ai-agent-start-or-switch~ is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
+
+The command ~ai-agent-run-skill~ discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend.
+
+The commands ~ai-agent-handoff~, ~ai-agent-audit-project~, ~ai-agent-debug-backtrace~, ~ai-agent-exit~, and ~ai-agent-restart~ resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
+
+** Claude Code commands
+:PROPERTIES:
+:CUSTOM_ID: h:claude-commands
+:END:
+
+#+findex: ai-agent-claude-start-or-switch
+#+findex: ai-agent-claude-select-account
+#+findex: ai-agent-claude-init-account
+#+findex: ai-agent-claude-run-skill
+#+findex: ai-agent-claude-batch-todos
+#+findex: ai-agent-claude-send-todo-at-point
+#+findex: ai-agent-claude-audit-project
+#+findex: ai-agent-claude-debug-backtrace
+#+findex: ai-agent-claude-handoff
+#+findex: ai-agent-claude-restart
+#+findex: ai-agent-claude-switch-branch
+#+findex: ai-agent-claude-create-branch
+#+findex: ai-agent-claude-ensure-statusline-config
+#+findex: ai-agent-claude-ensure-stop-hook-config
+#+findex: ai-agent-claude-ensure-notification-hook-config
+The Claude commands expose workflows that are specific to Claude Code. ~ai-agent-claude-start-or-switch~ starts Claude under the selected account or opens the unified switcher. ~ai-agent-claude-select-account~ persists an account choice, and ~ai-agent-claude-init-account~ prepares a new account directory with shared configuration files and symlinks.
+
+~ai-agent-claude-run-skill~, ~ai-agent-claude-batch-todos~, and ~ai-agent-claude-send-todo-at-point~ use non-interactive or interactive Claude sessions to run structured work. Batch TODO processing extracts Org headings, formats each heading and body as a prompt, runs entries sequentially, and records a summary buffer.
+
+~ai-agent-claude-create-branch~ creates a new Claude branch from the current session. With isolated branching it creates a git worktree under ~ai-agent-claude-fork-worktree-directory~ and links the branch session metadata into that project. ~ai-agent-claude-switch-branch~ displays the branch tree and switches to, or resumes, the selected session.
+
+The setup commands ensure that Claude's statusline, Stop hook, and Notification hook are present in =~/.claude/settings.json=. The backend runs them automatically when loaded, but they are also interactive so you can repair missing configuration manually.
+
+** Codex commands
+:PROPERTIES:
+:CUSTOM_ID: h:codex-commands
+:END:
+
+#+findex: ai-agent-codex-start-or-switch
+#+findex: ai-agent-codex-run-skill
+#+findex: ai-agent-codex-audit-project
+#+findex: ai-agent-codex-debug-backtrace
+#+findex: ai-agent-codex-handoff
+#+findex: ai-agent-codex-restart
+#+findex: ai-agent-codex-exit
+#+findex: ai-agent-codex-setup-kill-on-exit
+The Codex commands mirror the shared workflows for the Codex CLI. ~ai-agent-codex-start-or-switch~ starts Codex when no Codex sessions exist, otherwise it opens the shared switcher. ~ai-agent-codex-run-skill~ sends a slash-skill invocation to the current Codex buffer when possible, or prompts for a Codex session otherwise.
+
+~ai-agent-codex-audit-project~ prompts for a project directory, starts or reuses a Codex session there, and sends each configured audit skill sequentially. ~ai-agent-codex-debug-backtrace~ saves the current Emacs backtrace, asks =gptel= to identify likely packages, and starts a Codex session in the selected package source directory with instructions to fix the bug.
+
+~ai-agent-codex-handoff~ reads ~ai-agent-codex-handoff-file~, kills the current Codex buffer, and starts a new session with the handoff prompt. ~ai-agent-codex-restart~ resumes the current project with =codex resume --last= after killing the old session.
+
+* Functions
+:PROPERTIES:
+:CUSTOM_ID: h:functions
+:END:
+
+** Backend registration and display
+:PROPERTIES:
+:CUSTOM_ID: h:backend-functions
+:END:
+
+#+findex: ai-agent-register-backend
+#+findex: ai-agent-backend-icon
+#+findex: ai-agent-svg-icon
+#+findex: ai-agent-display-name
+#+findex: ai-agent-parse-skill-frontmatter
+#+findex: ai-agent-notify
+#+findex: ai-agent-protect-buffer
+#+findex: ai-agent-kill-session-buffer
+The function ~ai-agent-register-backend~ registers an AI tool by associating a backend symbol with a property list of buffer predicates, session discovery functions, command senders, and optional command handlers. Backend modules call it at load time. Required keys are validated so the shared session layer can rely on a consistent interface.
+
+~ai-agent-display-name~ returns a human-readable label for a session buffer. It starts with the project name, adds an instance name when needed to disambiguate duplicates, and lets backends append their own suffixes. The Claude backend uses this to expose branch identity in the modeline and switcher.
+
+~ai-agent-parse-skill-frontmatter~ reads =SKILL.md= frontmatter shared by Claude and Codex skill runners. It recognizes names, descriptions, argument hints, argument sources, argument choices, defaults, multiplicity, user-invocable flags, and model overrides.
+
+~ai-agent-svg-icon~ renders SVG strings as inline images, using the current face foreground when the SVG uses =currentColor=. Backends use this for modeline and transient display and can fall back to text abbreviations when SVG rendering is unavailable.
+
+** Modeline and status helpers
+:PROPERTIES:
+:CUSTOM_ID: h:modeline-functions
+:END:
+
+#+findex: ai-agent-claude-status-model
+#+findex: ai-agent-claude-status-cost
+#+findex: ai-agent-claude-status-context-percent
+#+findex: ai-agent-claude-status-duration-ms
+#+findex: ai-agent-claude-usage-five-hour-percent
+#+findex: ai-agent-claude-usage-weekly-percent
+#+findex: ai-agent-codex-status-model
+#+findex: ai-agent-codex-status-duration-ms
+The Claude and Codex status helpers are intended for modeline integrations such as =doom-modeline=. Claude status functions read the current session status JSON and expose model, cost, context, duration, and token information. Claude usage functions expose account-level utilization returned by the Anthropic usage endpoint. Codex status functions expose the configured model and elapsed session duration.
+
+* Transient menu
+:PROPERTIES:
+:CUSTOM_ID: h:transient-menu
+:END:
+
+#+findex: ai-agent-menu
+Backend modules extend ~ai-agent-menu~ through ~transient-append-suffix~ after the core menu is available. The base menu contains shared session, tool, alert, buffer, and option entries. The Claude module appends branch navigation, batch TODOs, TODO sending, log browsing, status polling, account selection, Copilot toggling, and branch-kill warnings.
+
+Boolean menu infixes use a shared transient class that toggles the bound variable each time it is invoked. The theme-sync infix additionally calls ~ai-agent-sync-theme-now~ when enabling theme sync, so backend configuration files are updated immediately.
+
+* Indices
+:PROPERTIES:
+:CUSTOM_ID: h:indices
+:END:
+
+** Function index
+:PROPERTIES:
+:INDEX: fn
+:CUSTOM_ID: h:function-index
+:END:
+
+** Variable index
+:PROPERTIES:
+:INDEX: vr
+:CUSTOM_ID: h:variable-index
+:END:
