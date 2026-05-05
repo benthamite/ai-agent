@@ -832,8 +832,9 @@ any code path."
   "Return non-nil if DIFF-BUFFER's file is inside SESSION's directory."
   (when-let ((session-dir (and session (monet--session-directory session)))
              (file-dir (buffer-local-value 'default-directory diff-buffer)))
-    (string-prefix-p (file-name-as-directory (expand-file-name session-dir))
-                     (expand-file-name file-dir))))
+    (file-in-directory-p (expand-file-name file-dir)
+                         (file-name-as-directory
+                          (expand-file-name session-dir)))))
 
 (defun ai-agent-claude--display-diff-buffer (diff-buffer &optional session)
   "Display DIFF-BUFFER in a bottom side window without switching tabs.
@@ -1785,6 +1786,8 @@ when no project is detected or no session matches."
   "Start batch processing of ENTRIES in working directory DIR.
 When COMMIT-AFTER-EACH is non-nil, automatically commit any uncommitted
 changes in DIR after each entry completes successfully."
+  (when commit-after-each
+    (ai-agent-claude--ensure-clean-worktree dir))
   (let* ((log-dir (expand-file-name
                    (format-time-string "batch_%Y-%m-%d_%H-%M-%S")
                    ai-agent-claude-log-directory))
@@ -1797,6 +1800,21 @@ changes in DIR after each entry completes successfully."
     (make-directory log-dir t)
     (message "Batch processing %d TODO(s)..." (length entries))
     (ai-agent-claude--batch-run-next state)))
+
+(defun ai-agent-claude--ensure-clean-worktree (dir)
+  "Signal a user error unless DIR is a clean git worktree."
+  (let ((default-directory dir))
+    (with-temp-buffer
+      (let ((exit (call-process "git" nil t nil
+                                "status" "--porcelain")))
+        (cond
+         ((not (zerop exit))
+          (user-error "Cannot inspect git worktree in %s: %s"
+                      dir (string-trim (buffer-string))))
+         ((> (buffer-size) 0)
+          (user-error
+           "Refusing audit auto-commit because %s has uncommitted changes"
+           dir)))))))
 
 (defun ai-agent-claude--batch-run-next (state)
   "Process the next entry in the batch queue in STATE.
@@ -1956,17 +1974,7 @@ Returns the process object."
                                             :model :max-turns)
                                for val = (plist-get kwargs key)
                                when val append (list key val))))
-         (env (let ((filtered (cl-remove-if
-                               (lambda (s) (or (string-prefix-p "CLAUDE_CODE" s)
-                                               (string-prefix-p "ANTHROPIC_API_KEY=" s)))
-                               process-environment)))
-                (if-let* ((account (ai-agent-claude--resolve-account))
-                          (config-dir (alist-get account ai-agent-claude-accounts
-                                                 nil nil #'string=)))
-                    (cons (format "CLAUDE_CONFIG_DIR=%s"
-                                  (expand-file-name config-dir))
-                          filtered)
-                  filtered)))
+         (env (ai-agent-claude--batch-process-environment))
          (start-time (current-time))
          (output-buf (generate-new-buffer " *claude-run-output*")))
     (let ((process-environment env)
@@ -2003,6 +2011,19 @@ Returns the process object."
                                    :raw ""))))
              (ignore-errors (kill-buffer (process-buffer proc)))
              (funcall callback result))))))))
+
+(defun ai-agent-claude--batch-process-environment ()
+  "Return the process environment for non-interactive Claude runs."
+  (if-let* ((account (ai-agent-claude--resolve-account))
+            (config-dir (alist-get account ai-agent-claude-accounts
+                                   nil nil #'string=)))
+      (cons (format "CLAUDE_CONFIG_DIR=%s" (expand-file-name config-dir))
+            (cl-remove-if
+             (lambda (s)
+               (or (string-prefix-p "CLAUDE_CODE" s)
+                   (string-prefix-p "ANTHROPIC_API_KEY=" s)))
+             process-environment))
+    process-environment))
 
 ;;;;; Skill runner
 
@@ -2054,51 +2075,31 @@ shadow global skills with the same name."
                      (string< (plist-get a :name) (plist-get b :name)))))))
 
 (defun ai-agent-claude--skill-display-result (skill-name result
-                                                              &optional buffers-before)
+                                                              &optional _buffers-before)
   "Display RESULT plist in a buffer for SKILL-NAME.
-When BUFFERS-BEFORE is non-nil, detect whether the skill created
-its own buffer (via emacsclient) and add metadata there instead of
-creating a separate buffer."
-  (let* ((new-buf (when buffers-before
-                    (car (cl-remove-if
-                          (lambda (b)
-                            (or (memq b buffers-before)
-                                (string-prefix-p " " (buffer-name b))))
-                          (buffer-list)))))
-         (meta-text (concat
+BUFFERS-BEFORE is ignored; results are always written to a
+dedicated buffer so unrelated user buffers are never modified."
+  (let ((meta-text (concat
                      (format "#+cost: $%.4f\n" (plist-get result :cost))
                      (format "#+duration: %.1fs\n" (plist-get result :duration))
                      (if-let* ((sid (plist-get result :session-id)))
                          (format "#+session: %s\n" sid)
-                       ""))))
-    (if new-buf
-        ;; Skill created its own buffer — add metadata there
-        (with-current-buffer new-buf
-          (let ((inhibit-read-only t))
-            (goto-char (point-min))
-            ;; Insert metadata after #+title line if present
-            (if (looking-at "^#\\+title:.*\n")
-                (goto-char (match-end 0))
-              (goto-char (point-min)))
-            (insert meta-text "\n"))
-          (goto-char (point-min))
-          (pop-to-buffer new-buf))
-      ;; No new buffer — show full result in a dedicated buffer
-      (let ((buf (get-buffer-create (format "*Claude Skill: %s*" skill-name))))
-        (with-current-buffer buf
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert (format "#+title: /%s — %s\n"
-                            skill-name
-                            (format-time-string "%Y-%m-%d %H:%M:%S")))
-            (insert meta-text)
-            (insert "\n")
-            (insert (or (plist-get result :text) "(no output)"))
-            (unless (string-suffix-p "\n" (or (plist-get result :text) ""))
-              (insert "\n")))
-          (org-mode)
-          (goto-char (point-min)))
-        (pop-to-buffer buf)))
+                       "")))
+        (buf (get-buffer-create (format "*Claude Skill: %s*" skill-name))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "#+title: /%s — %s\n"
+                        skill-name
+                        (format-time-string "%Y-%m-%d %H:%M:%S")))
+        (insert meta-text)
+        (insert "\n")
+        (insert (or (plist-get result :text) "(no output)"))
+        (unless (string-suffix-p "\n" (or (plist-get result :text) ""))
+          (insert "\n")))
+      (org-mode)
+      (goto-char (point-min)))
+    (pop-to-buffer buf)
     (message "/%s complete (%.1fs, $%.4f)"
              skill-name
              (plist-get result :duration)
@@ -2752,10 +2753,7 @@ Uses the current Claude buffer's directory if in one."
   "Kill the current buffer if it is a Claude session.
 Bypasses the kill-protection query."
   (when (claude-code--buffer-p (current-buffer))
-    (let ((kill-buffer-query-functions
-           (remq 'ai-agent-protect-buffer
-                 kill-buffer-query-functions)))
-      (kill-buffer (current-buffer)))))
+    (ai-agent--force-kill-buffer (current-buffer))))
 
 ;;;;; Restart
 

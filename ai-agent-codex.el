@@ -406,9 +406,7 @@ to a Codex session."
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty"))
     (when (codex--buffer-p (current-buffer))
-      (let ((kill-buffer-query-functions
-             (remq 'ai-agent-protect-buffer kill-buffer-query-functions)))
-        (kill-buffer (current-buffer))))
+      (ai-agent--force-kill-buffer (current-buffer)))
     (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
       (codex--start nil (list prompt) nil t))))
 
@@ -428,9 +426,7 @@ the most recently updated one for that directory."
   (let ((dir default-directory)
         (instance-name (codex--extract-instance-name-from-buffer-name
                         (buffer-name))))
-    (let ((kill-buffer-query-functions
-           (remq 'ai-agent-protect-buffer kill-buffer-query-functions)))
-      (kill-buffer (current-buffer)))
+    (ai-agent--force-kill-buffer (current-buffer))
     (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
       (codex--start-subcommand "resume" t nil instance-name))))
 

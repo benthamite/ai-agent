@@ -206,7 +206,7 @@ The commands @code{ai-agent-handoff}, @code{ai-agent-audit-project}, @code{ai-ag
 @findex ai-agent-claude-setup-config
 The Claude commands expose workflows that are specific to Claude Code. @code{ai-agent-claude-start-or-switch} starts Claude under the selected account or opens the unified switcher. @code{ai-agent-claude-select-account} persists an account choice, and @code{ai-agent-claude-init-account} prepares a new account directory with shared configuration files and symlinks.
 
-@code{ai-agent-claude-run-skill}, @code{ai-agent-claude-batch-todos}, and @code{ai-agent-claude-send-todo-at-point} use non-interactive or interactive Claude sessions to run structured work. Batch TODO processing extracts Org headings, formats each heading and body as a prompt, runs entries sequentially, and records a summary buffer.
+@code{ai-agent-claude-run-skill}, @code{ai-agent-claude-batch-todos}, and @code{ai-agent-claude-send-todo-at-point} use non-interactive or interactive Claude sessions to run structured work. Batch TODO processing extracts Org headings, formats each heading and body as a prompt, runs entries sequentially, and records a summary buffer. Project audits refuse to auto-commit unless the target git worktree is clean before the audit starts.
 
 @code{ai-agent-claude-create-branch} creates a new Claude branch from the current session. With isolated branching it creates a git worktree under @code{ai-agent-claude-fork-worktree-directory} and links the branch session metadata into that project. @code{ai-agent-claude-switch-branch} displays the branch tree and switches to, or resumes, the selected session.
 
