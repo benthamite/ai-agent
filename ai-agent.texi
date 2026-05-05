@@ -115,6 +115,7 @@ The user option @code{ai-agent-sigwinch-delay} is a number of seconds and defaul
 @vindex ai-agent-claude-settings-file
 @vindex ai-agent-claude-hook-wrapper
 @vindex ai-agent-claude-statusline-script
+@vindex ai-agent-claude-status-directory
 @vindex ai-agent-claude-batch-allowed-tools
 @vindex ai-agent-claude-batch-permission-mode
 @vindex ai-agent-claude-batch-max-turns
@@ -134,7 +135,7 @@ Batch execution options are passed to @samp{claude -p}. @code{ai-agent-claude-ba
 
 Branch and buffer safety options default conservatively. @code{ai-agent-claude-warn-kill-with-branches} defaults to @code{t} and warns before killing a session that belongs to a branch tree. @code{ai-agent-claude-fork-worktree-directory} defaults to a cache directory outside Google Drive so isolated branch worktrees do not interfere with sync.
 
-Claude hook setup is explicit. @code{ai-agent-claude-settings-file} names the settings file updated by @code{ai-agent-claude-setup-config} and the individual ensure commands. @code{ai-agent-claude-hook-wrapper} points to the upstream @samp{claude-code} hook wrapper, while @code{ai-agent-claude-statusline-script} points to the bundled statusline helper. Loading the backend does not modify Claude Code configuration.
+Claude hook setup is explicit. @code{ai-agent-claude-settings-file} names the settings file updated by @code{ai-agent-claude-setup-config} and the individual ensure commands. @code{ai-agent-claude-hook-wrapper} points to the upstream @samp{claude-code} hook wrapper, while @code{ai-agent-claude-statusline-script} points to the bundled statusline helper. @code{ai-agent-claude-status-directory} controls where the helper writes per-buffer status JSON files. Loading the backend does not modify Claude Code configuration.
 
 @node Codex backend
 @section Codex backend

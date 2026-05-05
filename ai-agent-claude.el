@@ -158,8 +158,11 @@ Set by `ai-agent-claude--capture-buffer-account' via
                        (or load-file-name buffer-file-name)))))
   "Absolute path to the bundled Claude hook helper directory.")
 
-(defconst ai-agent-claude--status-directory "/tmp/claude-code-status/"
-  "Directory where the statusline script writes JSON status files.")
+(defcustom ai-agent-claude-status-directory
+  (expand-file-name "claude-code-status/" temporary-file-directory)
+  "Directory where the statusline script writes JSON status files."
+  :type 'directory
+  :group 'ai-agent-claude)
 
 (defcustom ai-agent-claude-statusline-script
   (expand-file-name "etc/claude-code-statusline.sh"
@@ -904,8 +907,12 @@ Returns a plist, or nil if the file is missing or malformed."
 (defun ai-agent-claude--status-file ()
   "Return the status file path for the current buffer."
   (expand-file-name
-   (concat (ai-agent-claude--sanitize-buffer-name) ".json")
-   ai-agent-claude--status-directory))
+   (ai-agent-claude--status-file-name (buffer-name))
+   ai-agent-claude-status-directory))
+
+(defun ai-agent-claude--status-file-name (buffer-name)
+  "Return the collision-resistant status filename for BUFFER-NAME."
+  (concat (secure-hash 'sha256 buffer-name) ".json"))
 
 (defun ai-agent-claude--sanitize-buffer-name ()
   "Sanitize the current buffer name for use as a filename.
@@ -2397,9 +2404,17 @@ FILE defaults to `ai-agent-claude-settings-file'."
   (ai-agent-claude--require-executable ai-agent-claude-statusline-script)
   (let ((entry (make-hash-table :test #'equal)))
     (puthash "type" "command" entry)
-    (puthash "command" ai-agent-claude-statusline-script entry)
+    (puthash "command" (ai-agent-claude--statusline-command) entry)
     (puthash "padding" 0 entry)
     entry))
+
+(defun ai-agent-claude--statusline-command ()
+  "Return the shell command for the bundled statusline script."
+  (format "AI_AGENT_CLAUDE_STATUS_DIR=%s %s"
+          (shell-quote-argument
+           (directory-file-name
+            (expand-file-name ai-agent-claude-status-directory)))
+          (shell-quote-argument ai-agent-claude-statusline-script)))
 
 (defun ai-agent-claude--ensure-stop-hook (settings)
   "Ensure SETTINGS has the ai-agent Stop hook."

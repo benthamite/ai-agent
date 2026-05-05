@@ -62,6 +62,12 @@
     (should (equal (ai-agent-claude--sanitize-buffer-name)
                    "my_buffer_name"))))
 
+(ert-deftest ai-agent-claude-test-status-file-name-avoids-sanitizer-collisions ()
+  "Distinct buffer names get distinct status filenames."
+  (should-not
+   (equal (ai-agent-claude--status-file-name "*claude:~/foo/bar/:default*")
+          (ai-agent-claude--status-file-name "*claude:~/foo_bar/:default*"))))
+
 ;;;; Theme sync
 
 (defun ai-agent-claude-test--json-theme (file)
@@ -488,7 +494,10 @@
           (let* ((data (ai-agent-claude--read-json-object settings))
                  (statusline (gethash "statusLine" data)))
             (should (hash-table-p statusline))
-            (should (equal (gethash "command" statusline) script))
+            (should (string-match-p (regexp-quote script)
+                                    (gethash "command" statusline)))
+            (should (string-match-p "AI_AGENT_CLAUDE_STATUS_DIR="
+                                    (gethash "command" statusline)))
             (should (= (gethash "padding" statusline) 0))))
       (delete-file settings)
       (delete-file script))))

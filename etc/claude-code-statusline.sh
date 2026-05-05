@@ -4,7 +4,14 @@
 # Requires: jq
 
 input=$(cat)
-SAFE_NAME=$(printf '%s' "$CLAUDE_BUFFER_NAME" | tr -c 'a-zA-Z0-9_-' '_')
-mkdir -p /tmp/claude-code-status
-echo "$input" > "/tmp/claude-code-status/${SAFE_NAME}.json"
-
+if command -v shasum >/dev/null 2>&1; then
+    SAFE_NAME=$(printf '%s' "$CLAUDE_BUFFER_NAME" | shasum -a 256 | awk '{print $1}')
+elif command -v sha256sum >/dev/null 2>&1; then
+    SAFE_NAME=$(printf '%s' "$CLAUDE_BUFFER_NAME" | sha256sum | awk '{print $1}')
+else
+    echo "ai-agent: neither shasum nor sha256sum is available" >&2
+    exit 1
+fi
+STATUS_DIR=${AI_AGENT_CLAUDE_STATUS_DIR:-${TMPDIR:-/tmp}/claude-code-status}
+mkdir -p "$STATUS_DIR"
+printf '%s' "$input" > "$STATUS_DIR/${SAFE_NAME}.json"
