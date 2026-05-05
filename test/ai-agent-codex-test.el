@@ -97,25 +97,70 @@
                            "references/*.org"))))
       (delete-file file))))
 
-(ert-deftest ai-agent-codex-test-run-skill-prefers-current-codex-buffer ()
-  "Send skills to the current Codex buffer when already in one."
-  (let (sent-buffer sent-command displayed)
-    (with-temp-buffer
-      (let ((target (current-buffer)))
-        (cl-letf (((symbol-function 'codex--buffer-p)
-                   (lambda (buffer) (eq buffer target)))
-                  ((symbol-function 'codex--get-or-prompt-for-buffer)
-                   (lambda () (error "should not prompt")))
-                  ((symbol-function 'codex--do-send-command)
-                   (lambda (command)
-                     (setq sent-buffer (current-buffer)
-                           sent-command command)))
-                  ((symbol-function 'display-buffer)
-                   (lambda (buffer &rest _args) (setq displayed buffer))))
-          (ai-agent-codex-run-skill "proofread" "file.org")
-          (should (eq sent-buffer target))
-          (should (eq displayed target))
-          (should (equal sent-command "/proofread file.org")))))))
+(ert-deftest ai-agent-codex-test-discover-skills-skips-non-invocable ()
+  "Do not expose Codex skills marked `user-invocable: false'."
+  (let* ((dir (make-temp-file "codex-skills" t))
+         (visible (expand-file-name "visible/SKILL.md" dir))
+         (hidden (expand-file-name "hidden/SKILL.md" dir))
+         (ai-agent-codex-skill-directories (list dir)))
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory visible) t)
+          (make-directory (file-name-directory hidden) t)
+          (with-temp-file visible
+            (insert "---\nname: visible\n---\n"))
+          (with-temp-file hidden
+            (insert "---\nname: hidden\nuser-invocable: false\n---\n"))
+          (should (equal (mapcar (lambda (skill) (plist-get skill :name))
+                                 (ai-agent-codex--discover-skills))
+                         '("visible"))))
+      (delete-directory dir t))))
+
+(ert-deftest ai-agent-codex-test-build-exec-command ()
+  "Build a current `codex exec' command line."
+  (let ((codex-program "codex")
+        (codex-program-switches '("--search"))
+        (codex-model "gpt-5.5")
+        (codex-profile "work")
+        (codex-sandbox-mode 'workspace-write)
+        (codex-approval-policy 'on-request)
+        (codex-default-images '("image.png"))
+        (ai-agent-codex-exec-approval-policy 'never)
+        (ai-agent-codex-exec-sandbox-mode nil)
+        (ai-agent-codex-exec-skip-git-repo-check t))
+    (should (equal
+             (ai-agent-codex--build-exec-command "prompt" "/tmp/project")
+             '("codex" "--search" "exec" "--model" "gpt-5.5"
+               "--profile" "work" "--sandbox" "workspace-write"
+               "--ask-for-approval" "never" "--image" "image.png"
+               "--cd" "/tmp/project" "--color" "never"
+               "--skip-git-repo-check" "prompt")))))
+
+(ert-deftest ai-agent-codex-test-run-skill-uses-codex-exec ()
+  "Run discovered skills through the non-interactive Codex path."
+  (let* ((dir (make-temp-file "codex-skills" t))
+         (skill-file (expand-file-name "proofread/SKILL.md" dir))
+         (ai-agent-codex-skill-directories (list dir))
+         captured-prompt
+         captured-dir)
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory skill-file) t)
+          (with-temp-file skill-file
+            (insert "---\nname: proofread\n---\nProofread the file.\n"))
+          (cl-letf (((symbol-function 'ai-agent-codex--run-prompt)
+                     (lambda (prompt &rest kwargs)
+                       (setq captured-prompt prompt
+                             captured-dir (plist-get kwargs :dir))
+                       (funcall (plist-get kwargs :callback)
+                                '(:exit-code 0 :duration 0.1 :text "ok"))))
+                    ((symbol-function 'ai-agent-codex--display-result)
+                     #'ignore))
+            (ai-agent-codex-run-skill "proofread" "file.org"))
+          (should (string-match-p (regexp-quote skill-file) captured-prompt))
+          (should (string-match-p "Arguments: file.org" captured-prompt))
+          (should (equal captured-dir default-directory)))
+      (delete-directory dir t))))
 
 (provide 'ai-agent-codex-test)
 ;;; ai-agent-codex-test.el ends here

@@ -5,7 +5,7 @@
 ;; Author: Pablo Stafforini
 ;; URL: https://github.com/benthamite/ai-agent
 ;; Version: 0.1
-;; Package-Requires: ((claude-code "0.1") (consult "1.0") (paths "0.1") (ai-agent "0.1") (agent-log "0.1"))
+;; Package-Requires: ((claude-code "0.1") (consult "1.0") (ai-agent "0.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -31,7 +31,6 @@
 (require 'claude-code)
 (eval-and-compile (require 'ai-agent))
 (require 'consult)
-(require 'paths)
 (require 'subr-x)
 (require 'transient)
 
@@ -56,13 +55,13 @@ the standard kill-protection prompt."
   "Base directory for git worktrees created by `ai-agent-claude-create-branch'.
 Each forked session gets a sibling worktree under this directory,
 isolating its filesystem and git state from the parent session.
-Defaults to a location outside Google Drive to avoid sync
+Defaults to a cache location to avoid cloud sync
 interference with concurrent git operations."
   :type 'directory
   :group 'ai-agent-claude)
 
 (defcustom ai-agent-claude-log-directory
-  (expand-file-name "claude-logs" paths-dir-notes)
+  (expand-file-name "ai-agent/claude-logs/" user-emacs-directory)
   "Directory where Claude conversation logs are saved."
   :type 'directory
   :group 'ai-agent-claude)
@@ -104,7 +103,7 @@ The selection persists in `ai-agent-claude-account-file'.
 
 Example:
   \\='((\"personal\" . \"~/.claude-personal\")
-    (\"epoch\"    . \"~/.claude-epoch\"))"
+    (\"work\"     . \"~/.claude-work\"))"
   :type '(alist :key-type string :value-type directory)
   :group 'ai-agent-claude)
 
@@ -223,7 +222,7 @@ Used to detect when `/branch' creates a new session.")
 (declare-function org-entry-is-done-p "org" ())
 (declare-function org-todo "org" (&optional arg))
 (declare-function outline-next-heading "outline" ())
-(autoload 'agent-log-menu "agent-log" nil t)
+(declare-function agent-log-menu "agent-log" ())
 (declare-function eat-self-input "eat" (n &optional e))
 (declare-function eat-term-display-cursor "eat" (terminal))
 (declare-function eat-term-send-string "eat" (terminal string))
@@ -1295,7 +1294,8 @@ Also starts status and usage polling if not already active."
     (unless ai-agent-claude--status-timer
       (ai-agent-claude-start-status-polling))
     (ai-agent-claude-start-usage-polling)
-    (doom-modeline-set-modeline 'ai-session)))
+    (when (require 'doom-modeline-core nil t)
+      (doom-modeline-set-modeline 'ai-session))))
 
 (defun ai-agent-claude--capture-buffer-account ()
   "Store the account name as a buffer-local variable.
@@ -2616,27 +2616,23 @@ unconditionally recenter with `(recenter -1)'."
 (defvar gptel-model)
 (defvar gptel-use-tools)
 (defvar gptel--known-backends)
-(declare-function debug-save-backtrace "init" ())
 (declare-function gptel-request "gptel")
-(declare-function elpaca-get "elpaca")
-(declare-function elpaca-source-dir "elpaca")
-(declare-function find-library-name "find-func")
 
 ;;;###autoload
 (defun ai-agent-claude-debug-backtrace ()
   "Save the backtrace, choose the offending package, and open Claude Code.
-Use `debug-save-backtrace' to save the backtrace to the downloads
-directory, then ask a light LLM (via `gptel') to list all packages
-implicated in the error.  The user selects the right one via
-`completing-read', then an interactive Claude Code session starts
-in that package's source directory with the backtrace file path."
+Save the current backtrace to `ai-agent-backtrace-file', then ask
+`gptel' to list all packages implicated in the error.  The user
+selects the right one via `completing-read', then an interactive
+Claude Code session starts in that package's source directory with
+the backtrace file path."
   (interactive)
-  (let ((backtrace-file (expand-file-name "backtrace.el" paths-dir-downloads)))
+  (let ((backtrace-file (expand-file-name ai-agent-backtrace-file)))
     ;; Schedule the identification work to run after the current command.
-    ;; `debug-save-backtrace' kills the *Backtrace* buffer, which exits the
+    ;; `ai-agent-save-backtrace' kills the *Backtrace* buffer, which exits the
     ;; debugger's `recursive-edit' and unwinds this call frame.
     (run-with-timer 0 nil #'ai-agent-claude--debug-identify-package backtrace-file)
-    (debug-save-backtrace)))
+    (ai-agent-save-backtrace)))
 
 (defun ai-agent-claude--debug-identify-package (backtrace-file)
   "Identify candidate packages from BACKTRACE-FILE and let the user choose.
@@ -2645,6 +2641,8 @@ then present the list via `completing-read' so the user can select
 the right one before starting a Claude Code session."
   (unless (file-exists-p backtrace-file)
     (user-error "Backtrace file not found: %s" backtrace-file))
+  (unless (and (require 'gptel nil t) (fboundp 'gptel-request))
+    (user-error "Package `gptel' is required for backtrace debugging"))
   (message "Identifying packages from backtrace...")
   (let ((contents (with-temp-buffer
                     (insert-file-contents backtrace-file)
@@ -2672,13 +2670,8 @@ the right one before starting a Claude Code session."
   "Start a Claude Code session for PACKAGE with BACKTRACE-FILE.
 Find the elpaca source directory for PACKAGE, start Claude Code
 there with the backtrace prompt passed as a CLI argument."
-  (let* ((elpaca-entry (elpaca-get package))
-         (dir (cond
-               (elpaca-entry (elpaca-source-dir elpaca-entry))
-               ((condition-case nil
-                    (file-name-directory (find-library-name (symbol-name package)))
-                  (error nil)))
-               (t (user-error "Package `%s' not found" package))))
+  (let* ((dir (or (ai-agent--package-source-directory package)
+                  (user-error "Package `%s' not found" package)))
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
     (message "Starting Claude Code for `%s' in %s..." package dir)
@@ -2714,9 +2707,11 @@ there with the backtrace prompt passed as a CLI argument."
 
 ;;;;; Handoff
 
-(defconst ai-agent-claude-handoff-file
-  "/tmp/claude-code-handoff.md"
-  "Path to the handoff file written by the `/handoff' skill.")
+(defcustom ai-agent-claude-handoff-file
+  (expand-file-name "claude-code-handoff.md" temporary-file-directory)
+  "Path to the handoff file written by the `/handoff' skill."
+  :type 'file
+  :group 'ai-agent-claude)
 
 ;;;###autoload
 (defun ai-agent-claude-handoff ()
@@ -3221,6 +3216,13 @@ Signals an error if the status file is missing or incomplete."
   :variable 'ai-agent-claude--current-account
   :description "account")
 
+(defun ai-agent-claude-agent-log-menu ()
+  "Open the optional `agent-log' menu."
+  (interactive)
+  (unless (require 'agent-log nil t)
+    (user-error "Package `agent-log' is required for log browsing"))
+  (call-interactively #'agent-log-menu))
+
 (with-eval-after-load 'ai-agent
   ;; Sessions: after "exit session"
   (transient-append-suffix 'ai-agent-menu "x"
@@ -3233,7 +3235,7 @@ Signals an error if the status file is missing or incomplete."
   (transient-append-suffix 'ai-agent-menu "b"
     '("t" "send todo at point" ai-agent-claude-send-todo-at-point))
   (transient-append-suffix 'ai-agent-menu "t"
-    '("l" "logs" agent-log-menu))
+    '("l" "logs" ai-agent-claude-agent-log-menu))
   ;; Alerts: after "toggle alert"
   (transient-append-suffix 'ai-agent-menu "T"
     '("p" "start status polling" ai-agent-claude-start-status-polling))

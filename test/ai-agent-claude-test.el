@@ -289,9 +289,9 @@
 
 ;;;; Transient menu
 
-(ert-deftest ai-agent-claude-test-agent-log-menu-is-autoloaded ()
-  "Expose `agent-log-menu' as a command for transient suffix validation."
-  (should (commandp 'agent-log-menu)))
+(ert-deftest ai-agent-claude-test-agent-log-wrapper-is-command ()
+  "Expose log browsing as a command without requiring `agent-log'."
+  (should (commandp 'ai-agent-claude-agent-log-menu)))
 
 ;;;; Display names
 

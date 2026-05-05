@@ -30,6 +30,7 @@
 
 (require 'codex)
 (eval-and-compile (require 'ai-agent))
+(require 'cl-lib)
 (require 'subr-x)
 (require 'transient)
 
@@ -39,7 +40,8 @@
   "Extensions for `codex'."
   :group 'codex)
 
-(defcustom ai-agent-codex-handoff-file "/tmp/codex-handoff.md"
+(defcustom ai-agent-codex-handoff-file
+  (expand-file-name "codex-handoff.md" temporary-file-directory)
   "Path to the handoff file written by the handoff skill."
   :type 'file
   :group 'ai-agent-codex)
@@ -61,6 +63,29 @@ Searched in addition to the standard locations."
   :type '(repeat directory)
   :group 'ai-agent-codex)
 
+(defcustom ai-agent-codex-exec-approval-policy 'never
+  "Approval policy used for non-interactive `codex exec' runs.
+When nil, use `codex-approval-policy' or the CLI default."
+  :type '(choice (const :tag "Codex default" nil)
+                 (const :tag "Untrusted" untrusted)
+                 (const :tag "On request" on-request)
+                 (const :tag "Never" never))
+  :group 'ai-agent-codex)
+
+(defcustom ai-agent-codex-exec-sandbox-mode nil
+  "Sandbox mode used for non-interactive `codex exec' runs.
+When nil, use `codex-sandbox-mode' or the CLI default."
+  :type '(choice (const :tag "Codex default" nil)
+                 (const :tag "Read-only" read-only)
+                 (const :tag "Workspace write" workspace-write)
+                 (const :tag "Full access" danger-full-access))
+  :group 'ai-agent-codex)
+
+(defcustom ai-agent-codex-exec-skip-git-repo-check t
+  "When non-nil, pass `--skip-git-repo-check' to `codex exec'."
+  :type 'boolean
+  :group 'ai-agent-codex)
+
 (defcustom ai-agent-codex-debug-backtrace-model 'gemini-flash-lite-latest
   "GPtel model for identifying candidate packages from a backtrace."
   :type 'symbol
@@ -76,13 +101,7 @@ Searched in addition to the standard locations."
 (defvar gptel-use-tools)
 (defvar gptel--known-backends)
 (declare-function ai-agent-svg-icon "ai-agent" (svg-data &optional face))
-(declare-function debug-save-backtrace "init" ())
 (declare-function gptel-request "gptel")
-(declare-function elpaca-get "elpaca")
-(declare-function elpaca-source-dir "elpaca")
-(declare-function find-library-name "find-func")
-(declare-function paths-dir-downloads "paths")
-(defvar paths-dir-downloads)
 
 ;;;; Backend registration
 
@@ -158,7 +177,8 @@ segment does not perform disk I/O on every redisplay."
 Also records the session start time."
   (when (codex--buffer-p (current-buffer))
     (setq ai-agent-codex--start-time (current-time))
-    (doom-modeline-set-modeline 'ai-session)))
+    (when (require 'doom-modeline-core nil t)
+      (doom-modeline-set-modeline 'ai-session))))
 
 (defun ai-agent-codex-status-model ()
   "Return the model name for the current Codex session."
@@ -266,8 +286,10 @@ from `ai-agent-codex-skill-directories'."
                        (expand-file-name "*/SKILL.md" dir)))
           (when-let* ((meta (ai-agent-codex--parse-skill-frontmatter file))
                       (name (plist-get meta :name)))
-            (puthash name (append meta (list :path file :source dir))
-                     skills)))))
+            (unless (and (plist-member meta :user-invocable)
+                         (not (plist-get meta :user-invocable)))
+              (puthash name (append meta (list :path file :source dir))
+                       skills))))))
     (let (result)
       (maphash (lambda (_name skill) (push skill result)) skills)
       (sort result (lambda (a b)
@@ -277,10 +299,156 @@ from `ai-agent-codex-skill-directories'."
   "Parse YAML frontmatter from skill FILE and return a plist."
   (ai-agent-parse-skill-frontmatter file))
 
+(defun ai-agent-codex--find-skill (skill-name)
+  "Return discovered metadata for SKILL-NAME, or nil."
+  (let ((name (string-remove-prefix "/" skill-name)))
+    (cl-find name (ai-agent-codex--discover-skills)
+             :key (lambda (skill) (plist-get skill :name))
+             :test #'equal)))
+
+(defun ai-agent-codex--skill-prompt (skill skill-name arguments)
+  "Return a prompt for running SKILL-NAME with ARGUMENTS.
+When SKILL metadata is available, point Codex at the skill file.
+Otherwise return a slash invocation for Codex-native skill lookup."
+  (if skill
+      (format (string-join
+               '("Run the Codex skill `%s`%s."
+                 ""
+                 "Skill file: %s"
+                 ""
+                 "Read the skill file first and follow its instructions exactly."
+                 "Resolve relative paths mentioned by the skill relative to the skill file's directory.%s")
+               "\n")
+              (plist-get skill :name)
+              (if (and arguments (not (string-empty-p arguments)))
+                  (format " with these arguments: %s" arguments)
+                "")
+              (plist-get skill :path)
+              (if (and arguments (not (string-empty-p arguments)))
+                  (format "\n\nArguments: %s" arguments)
+                ""))
+    (ai-agent-codex--slash-invocation skill-name arguments)))
+
+(defun ai-agent-codex--slash-invocation (skill-name arguments)
+  "Return a Codex slash invocation for SKILL-NAME and ARGUMENTS."
+  (let ((command (if (string-prefix-p "/" skill-name)
+                     skill-name
+                   (concat "/" skill-name))))
+    (if (and arguments (not (string-empty-p arguments)))
+        (format "%s %s" command arguments)
+      command)))
+
+(defun ai-agent-codex--display-result (buffer-name title result)
+  "Display RESULT in BUFFER-NAME with TITLE."
+  (let ((buf (get-buffer-create buffer-name)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "#+title: %s — %s\n"
+                        title
+                        (format-time-string "%Y-%m-%d %H:%M:%S")))
+        (insert (format "#+exit-code: %s\n" (plist-get result :exit-code)))
+        (insert (format "#+duration: %.1fs\n\n" (plist-get result :duration)))
+        (insert (or (plist-get result :text) "(no output)"))
+        (unless (string-suffix-p "\n" (or (plist-get result :text) ""))
+          (insert "\n")))
+      (org-mode)
+      (goto-char (point-min)))
+    (pop-to-buffer buf)))
+
+(defun ai-agent-codex--build-exec-command (prompt dir)
+  "Return the `codex exec' command for PROMPT in DIR."
+  (append (list codex-program)
+          codex-program-switches
+          (list "exec")
+          (ai-agent-codex--exec-model-args)
+          (ai-agent-codex--exec-profile-args)
+          (ai-agent-codex--exec-sandbox-args)
+          (ai-agent-codex--exec-approval-args)
+          (ai-agent-codex--exec-image-args)
+          (list "--cd" (expand-file-name dir)
+                "--color" "never")
+          (when ai-agent-codex-exec-skip-git-repo-check
+            (list "--skip-git-repo-check"))
+          (list prompt)))
+
+(defun ai-agent-codex--exec-model-args ()
+  "Return `codex exec' model arguments."
+  (when codex-model
+    (list "--model" codex-model)))
+
+(defun ai-agent-codex--exec-profile-args ()
+  "Return `codex exec' profile arguments."
+  (when codex-profile
+    (list "--profile" codex-profile)))
+
+(defun ai-agent-codex--exec-sandbox-args ()
+  "Return `codex exec' sandbox arguments."
+  (when-let* ((mode (or ai-agent-codex-exec-sandbox-mode codex-sandbox-mode)))
+    (list "--sandbox" (symbol-name mode))))
+
+(defun ai-agent-codex--exec-approval-args ()
+  "Return `codex exec' approval-policy arguments."
+  (when-let* ((policy (or ai-agent-codex-exec-approval-policy
+                          codex-approval-policy)))
+    (list "--ask-for-approval" (symbol-name policy))))
+
+(defun ai-agent-codex--exec-image-args ()
+  "Return `codex exec' image arguments."
+  (cl-loop for image in codex-default-images
+           append (list "--image" image)))
+
+(defun ai-agent-codex--exec-process-environment (dir)
+  "Return the process environment for non-interactive Codex runs in DIR."
+  (let* ((buffer-name (format "*codex-exec:%s*"
+                              (file-name-nondirectory
+                               (directory-file-name dir))))
+         (extra-env (apply #'append
+                           (mapcar (lambda (func)
+                                     (funcall func buffer-name dir))
+                                   codex-process-environment-functions))))
+    (append `(,(format "CODEX_BUFFER_NAME=%s" buffer-name))
+            extra-env
+            process-environment)))
+
+(defun ai-agent-codex--run-prompt (prompt &rest kwargs)
+  "Run PROMPT non-interactively via `codex exec'.
+KWARGS accepts :dir and :callback.  The callback receives a plist
+with :exit-code, :duration, :text, and :raw."
+  (let* ((dir (or (plist-get kwargs :dir) default-directory))
+         (callback (or (plist-get kwargs :callback)
+                       (error "ai-agent-codex--run-prompt: :callback required")))
+         (args (ai-agent-codex--build-exec-command prompt dir))
+         (env (ai-agent-codex--exec-process-environment dir))
+         (start-time (current-time))
+         (output-buf (generate-new-buffer " *codex-exec-output*")))
+    (unless (executable-find codex-program)
+      (error "Codex program `%s' not found in PATH" codex-program))
+    (let ((process-environment env)
+          (default-directory dir))
+      (make-process
+       :name "codex-exec"
+       :buffer output-buf
+       :command args
+       :sentinel
+       (lambda (proc _event)
+         (when (memq (process-status proc) '(exit signal))
+           (let* ((exit-code (process-exit-status proc))
+                  (raw (with-current-buffer (process-buffer proc)
+                         (buffer-string)))
+                  (duration (float-time
+                             (time-subtract (current-time) start-time)))
+                  (result (list :exit-code exit-code
+                                :duration duration
+                                :text (string-trim raw)
+                                :raw raw)))
+             (ignore-errors (kill-buffer (process-buffer proc)))
+             (funcall callback result))))))))
+
 ;;;###autoload
 (defun ai-agent-codex-run-skill (skill-name &optional arguments)
   "Run Codex skill SKILL-NAME with optional ARGUMENTS.
-Sends the skill invocation to the active Codex session."
+Runs the skill non-interactively via `codex exec'."
   (interactive
    (let* ((skills (ai-agent-codex--discover-skills))
           (_ (unless skills (user-error "No skills found")))
@@ -290,38 +458,94 @@ Sends the skill invocation to the active Codex session."
                  nil t))
           (args (read-string (format "Arguments for %s: " name))))
      (list name (unless (string-empty-p args) args))))
-  (let* ((prompt (if arguments
-                     (format "/%s %s" skill-name arguments)
-                   (format "/%s" skill-name)))
-         (buf (or (and (codex--buffer-p (current-buffer))
-                       (current-buffer))
-                  (codex--get-or-prompt-for-buffer)
-                  (user-error "No running Codex session"))))
-    (with-current-buffer buf
-      (codex--do-send-command prompt))
-    (display-buffer buf)))
+  (let* ((skill (ai-agent-codex--find-skill skill-name))
+         (prompt (ai-agent-codex--skill-prompt skill skill-name arguments)))
+    (message "Running Codex skill %s..." (ai-agent-codex--slash-invocation skill-name nil))
+    (ai-agent-codex--run-prompt
+     prompt
+     :dir default-directory
+     :callback
+     (lambda (result)
+       (ai-agent-codex--display-result
+        (format "*Codex Skill: %s*" (string-remove-prefix "/" skill-name))
+        (format "Codex %s" (ai-agent-codex--slash-invocation skill-name nil))
+        result)))))
 
 ;;;;; Project audit
 
 ;;;###autoload
 (defun ai-agent-codex-audit-project ()
   "Run a comprehensive audit of a project via Codex.
-Sequentially sends each skill in `ai-agent-codex-audit-skills'
-to a Codex session."
+Sequentially runs each skill in `ai-agent-codex-audit-skills'
+via `codex exec'."
   (interactive)
   (let* ((dir (ai-agent-codex--read-audit-directory))
          (skills ai-agent-codex-audit-skills))
     (when (yes-or-no-p
            (format "Run %d audit(s) on %s?" (length skills) dir))
-      (let ((buf (or (car (codex--find-codex-buffers-for-directory dir))
-                     (let ((default-directory dir))
-                       (codex)
-                       (car (codex--find-codex-buffers-for-directory dir))))))
-        (unless buf
-          (user-error "Failed to create Codex session for %s" dir))
-        (dolist (skill skills)
-          (with-current-buffer buf
-            (codex--do-send-command (format "%s --accept" skill))))))))
+      (ai-agent-codex--audit-run-next
+       (list :queue skills
+             :results nil
+             :dir dir
+             :start-time (current-time))))))
+
+(defun ai-agent-codex--audit-run-next (state)
+  "Run the next audit task in STATE."
+  (if (null (plist-get state :queue))
+      (ai-agent-codex--audit-finish state)
+    (let* ((queue (plist-get state :queue))
+           (skill-name (car queue))
+           (skill (ai-agent-codex--find-skill skill-name))
+           (prompt (ai-agent-codex--skill-prompt skill skill-name "--accept")))
+      (message "Running Codex audit %s..." skill-name)
+      (ai-agent-codex--run-prompt
+       prompt
+       :dir (plist-get state :dir)
+       :callback
+       (lambda (result)
+         (plist-put state :results
+                    (cons (append (list :skill skill-name) result)
+                          (plist-get state :results)))
+         (plist-put state :queue (cdr queue))
+         (ai-agent-codex--audit-run-next state))))))
+
+(defun ai-agent-codex--audit-finish (state)
+  "Display the audit results from STATE."
+  (let* ((results (reverse (plist-get state :results)))
+         (total (length results))
+         (successes (cl-count 0 results :key
+                              (lambda (result)
+                                (plist-get result :exit-code))))
+         (failures (- total successes))
+         (duration (float-time
+                    (time-subtract (current-time)
+                                   (plist-get state :start-time))))
+         (buf (get-buffer-create "*Codex Audit Results*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "#+title: Codex audit results — %s\n\n"
+                        (format-time-string "%Y-%m-%d %H:%M:%S")))
+        (insert (format "- Directory: [[file:%s]]\n" (plist-get state :dir)))
+        (insert (format "- Total: %d | Success: %d | Failed: %d\n" total successes failures))
+        (insert (format "- Time: %.1f seconds\n\n" duration))
+        (dolist (result results)
+          (insert (format "* %s %s\n"
+                          (if (zerop (plist-get result :exit-code)) "DONE" "FAIL")
+                          (plist-get result :skill)))
+          (insert (format ":PROPERTIES:\n:EXIT_CODE: %s\n:DURATION: %.1fs\n:END:\n\n"
+                          (plist-get result :exit-code)
+                          (plist-get result :duration)))
+          (insert "#+begin_example\n")
+          (insert (or (plist-get result :text) "(no output)"))
+          (unless (string-suffix-p "\n" (or (plist-get result :text) ""))
+            (insert "\n"))
+          (insert "#+end_example\n\n")))
+      (org-mode)
+      (goto-char (point-min)))
+    (pop-to-buffer buf)
+    (message "Codex audit complete: %d/%d succeeded (%.1fs)"
+             successes total duration)))
 
 (defun ai-agent-codex--read-audit-directory ()
   "Prompt for a project directory with completion."
@@ -344,14 +568,16 @@ to a Codex session."
 (defun ai-agent-codex-debug-backtrace ()
   "Save the backtrace, identify the offending package, and open Codex."
   (interactive)
-  (let ((backtrace-file (expand-file-name "backtrace.el" paths-dir-downloads)))
+  (let ((backtrace-file (expand-file-name ai-agent-backtrace-file)))
     (run-with-timer 0 nil #'ai-agent-codex--debug-identify-package backtrace-file)
-    (debug-save-backtrace)))
+    (ai-agent-save-backtrace)))
 
 (defun ai-agent-codex--debug-identify-package (backtrace-file)
   "Identify candidate packages from BACKTRACE-FILE and let the user choose."
   (unless (file-exists-p backtrace-file)
     (user-error "Backtrace file not found: %s" backtrace-file))
+  (unless (and (require 'gptel nil t) (fboundp 'gptel-request))
+    (user-error "Package `gptel' is required for backtrace debugging"))
   (message "Identifying packages from backtrace...")
   (let ((contents (with-temp-buffer
                     (insert-file-contents backtrace-file)
@@ -375,13 +601,8 @@ to a Codex session."
 
 (defun ai-agent-codex--debug-start-session (package backtrace-file)
   "Start a Codex session for PACKAGE with BACKTRACE-FILE."
-  (let* ((elpaca-entry (and (fboundp 'elpaca-get) (elpaca-get package)))
-         (dir (cond
-               (elpaca-entry (elpaca-source-dir elpaca-entry))
-               ((condition-case nil
-                    (file-name-directory (find-library-name (symbol-name package)))
-                  (error nil)))
-               (t (user-error "Package `%s' not found" package))))
+  (let* ((dir (or (ai-agent--package-source-directory package)
+                  (user-error "Package `%s' not found" package)))
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
     (message "Starting Codex for `%s' in %s..." package dir)
@@ -443,6 +664,22 @@ unified session switcher."
     (ai-agent--ensure-all-session-keys)
     (transient-setup 'ai-agent--session-switcher)))
 
+;;;;; Branch navigation
+
+;;;###autoload
+(defun ai-agent-codex-resume (arg)
+  "Resume a previous Codex session.
+With prefix ARG, use Codex CLI's `--last' flag."
+  (interactive "P")
+  (codex-resume arg))
+
+;;;###autoload
+(defun ai-agent-codex-fork (arg)
+  "Fork a previous Codex session.
+With prefix ARG, use Codex CLI's `--last' flag."
+  (interactive "P")
+  (codex-fork arg))
+
 ;;;; Hooks
 
 (add-hook 'codex-event-hook #'ai-agent-codex--handle-notification)
@@ -499,6 +736,14 @@ Emacs side to match Claude Code's behavior."
 
 (add-hook 'codex-start-hook #'ai-agent-codex-setup-kill-on-exit)
 (advice-add 'codex--do-send-command :around #'ai-agent-codex--intercept-exit)
+
+;;;;; Extend unified menu
+
+(with-eval-after-load 'ai-agent
+  (transient-append-suffix 'ai-agent-menu "x"
+    '("R" "codex resume" ai-agent-codex-resume))
+  (transient-append-suffix 'ai-agent-menu "R"
+    '("F" "codex fork" ai-agent-codex-fork)))
 
 ;;;; Provide
 

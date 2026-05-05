@@ -149,6 +149,20 @@
       (ai-agent-run-skill)
       (should (equal ran '(two "audit" nil))))))
 
+(ert-deftest ai-agent-test-discover-all-skills-skips-non-invocable ()
+  "Do not expose skills marked `user-invocable: false'."
+  (let ((ai-agent-backends nil))
+    (ai-agent-register-backend
+     'one
+     (ai-agent-test--backend
+      :discover-skills (lambda ()
+                         (list (list :name "visible")
+                               (list :name "hidden"
+                                     :user-invocable nil)))))
+    (should (equal (mapcar (lambda (skill) (plist-get skill :name))
+                           (ai-agent--discover-all-skills))
+                   '("visible")))))
+
 (ert-deftest ai-agent-test-parse-skill-frontmatter-argument-metadata ()
   "Parse shared skill argument metadata from frontmatter."
   (let ((file (make-temp-file "skill" nil ".md")))

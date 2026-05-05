@@ -80,6 +80,7 @@ Optional command keys for dispatching shared commands:
   :debug-backtrace       function () (analyze backtrace, start session)
   :setup-kill-on-exit    function () (auto-kill buffer on process exit)
   :exit                  function () (exit session and kill buffer)
+  :restart               function () (restart current session)
   :sync-theme            function (theme) (persist light/dark theme)")
 
 (defvar-local ai-agent--backend nil
@@ -175,8 +176,23 @@ Only takes effect when `ai-agent-alert-on-ready' is non-nil."
                  (const :tag "Both visual and sound" both))
   :group 'ai-agent)
 
-(defcustom ai-agent-alert-sound "/System/Library/Sounds/Glass.aiff"
-  "Path to the sound file played when a session finishes responding."
+(defcustom ai-agent-alert-sound nil
+  "Path to the sound file played when a session finishes responding.
+When nil, sound alerts are disabled even if `ai-agent-alert-style'
+is `sound' or `both'."
+  :type '(choice (const :tag "No sound" nil) file)
+  :group 'ai-agent)
+
+(defcustom ai-agent-alert-sound-player nil
+  "External program used to play `ai-agent-alert-sound'.
+When nil, `ai-agent--alert-sound' uses `play-sound-file' when
+that function is available."
+  :type '(choice (const :tag "Use Emacs sound support" nil) string)
+  :group 'ai-agent)
+
+(defcustom ai-agent-backtrace-file
+  (expand-file-name "ai-agent-backtrace.el" temporary-file-directory)
+  "File where `ai-agent-save-backtrace' writes Emacs backtraces."
   :type 'file
   :group 'ai-agent)
 
@@ -253,6 +269,9 @@ and cleared when input is sent.")
 (declare-function eat-term-display-cursor "eat" (terminal))
 (declare-function eat-term-set-scrollback-size "eat" (terminal size))
 (declare-function alert "alert")
+(declare-function elpaca-get "elpaca")
+(declare-function elpaca-source-dir "elpaca")
+(declare-function find-library-name "find-func")
 
 (declare-function consult--read "consult")
 (declare-function consult--prefix-group "consult")
@@ -606,9 +625,21 @@ configured alert style."
 (defun ai-agent--alert-sound ()
   "Play the configured alert sound."
   (when (memq ai-agent-alert-style '(sound both))
-    (when-let* ((sound ai-agent-alert-sound)
-                ((file-exists-p sound)))
-      (start-process "ai-agent-alert-sound" nil "afplay" sound))))
+    (when-let* ((sound ai-agent-alert-sound))
+      (if (not (file-exists-p sound))
+          (message "AI alert sound file not found: %s" sound)
+        (cond
+         ((fboundp 'play-sound-file)
+          (play-sound-file sound))
+         ((and ai-agent-alert-sound-player
+               (executable-find ai-agent-alert-sound-player))
+          (start-process "ai-agent-alert-sound" nil
+                         ai-agent-alert-sound-player sound))
+         (ai-agent-alert-sound-player
+          (message "AI alert sound player not found: %s"
+                   ai-agent-alert-sound-player))
+         (t
+          (message "No Emacs sound support or `ai-agent-alert-sound-player'")))))))
 
 (defun ai-agent--clear-waiting-for-input (&rest _)
   "Clear the waiting-for-input flag in the current buffer."
@@ -726,7 +757,8 @@ ORIG-FN is `consult-yasnippet'; ARG is the prefix argument."
                (text (replace-regexp-in-string "\n" "\e\r" expanded)))
           (eat-term-send-string eat-terminal text))))))
 
-(advice-add 'consult-yasnippet :around #'ai-agent--consult-yasnippet)
+(with-eval-after-load 'consult-yasnippet
+  (advice-add 'consult-yasnippet :around #'ai-agent--consult-yasnippet))
 
 (defun ai-agent--try-expand-snippet-at-prompt ()
   "Try to expand a yasnippet key at the eat terminal prompt.
@@ -917,8 +949,10 @@ combined list of skill plists, each augmented with `:backend'."
     (dolist (entry ai-agent-backends)
       (when-let* ((discover-fn (plist-get (cdr entry) :discover-skills)))
         (dolist (skill (funcall discover-fn))
-          (push (plist-put (copy-sequence skill) :backend (car entry))
-                all-skills))))
+          (unless (and (plist-member skill :user-invocable)
+                       (not (plist-get skill :user-invocable)))
+            (push (plist-put (copy-sequence skill) :backend (car entry))
+                  all-skills)))))
     (sort all-skills (lambda (a b)
                        (string< (plist-get a :name) (plist-get b :name))))))
 
@@ -1015,6 +1049,33 @@ the backend next to each."
   "Analyze a backtrace and start a session in the culprit package."
   (interactive)
   (ai-agent--dispatch :debug-backtrace))
+
+;;;###autoload
+(defun ai-agent-save-backtrace ()
+  "Save the current Emacs backtrace and return its file path."
+  (interactive)
+  (unless (string-match-p "\\*Backtrace\\*" (buffer-name))
+    (user-error "Not in a backtrace buffer"))
+  (let ((file (expand-file-name ai-agent-backtrace-file))
+        (contents (buffer-string)))
+    (make-directory (file-name-directory file) t)
+    (with-temp-buffer
+      (insert contents)
+      (write-region (point-min) (point-max) file nil 'silent))
+    (kill-new file)
+    (kill-buffer)
+    (message "Backtrace saved to %s" (abbreviate-file-name file))
+    file))
+
+(defun ai-agent--package-source-directory (package)
+  "Return a source directory for PACKAGE, or nil."
+  (or (when-let* ((entry (and (fboundp 'elpaca-get) (elpaca-get package)))
+                  ((fboundp 'elpaca-source-dir)))
+        (elpaca-source-dir entry))
+      (when (require 'find-func nil t)
+        (condition-case nil
+            (file-name-directory (find-library-name (symbol-name package)))
+          (error nil)))))
 
 ;;;###autoload
 (defun ai-agent-setup-kill-on-exit ()
