@@ -360,11 +360,11 @@ Otherwise return a slash invocation for Codex-native skill lookup."
   "Return the `codex exec' command for PROMPT in DIR."
   (append (list codex-program)
           codex-program-switches
+          (ai-agent-codex--exec-approval-args)
           (list "exec")
           (ai-agent-codex--exec-model-args)
           (ai-agent-codex--exec-profile-args)
           (ai-agent-codex--exec-sandbox-args)
-          (ai-agent-codex--exec-approval-args)
           (ai-agent-codex--exec-image-args)
           (list "--cd" (expand-file-name dir)
                 "--color" "never")
@@ -388,7 +388,7 @@ Otherwise return a slash invocation for Codex-native skill lookup."
     (list "--sandbox" (symbol-name mode))))
 
 (defun ai-agent-codex--exec-approval-args ()
-  "Return `codex exec' approval-policy arguments."
+  "Return Codex approval-policy arguments."
   (when-let* ((policy (or ai-agent-codex-exec-approval-policy
                           codex-approval-policy)))
     (list "--ask-for-approval" (symbol-name policy))))

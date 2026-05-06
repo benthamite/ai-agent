@@ -113,7 +113,7 @@ The Codex backend options control handoff, skill discovery, non-interactive exec
 
 ~ai-agent-codex-skill-directories~ is a list of additional directories scanned for Codex skills. The backend also scans standard Codex skill locations and project-local skill directories. ~ai-agent-codex-audit-skills~ defaults to the code, design, and interpretability audit skills, while ~ai-agent-codex-audit-project-directories~ stores completion candidates for the audit directory prompt.
 
-~ai-agent-codex-exec-approval-policy~, ~ai-agent-codex-exec-sandbox-mode~, and ~ai-agent-codex-exec-skip-git-repo-check~ configure the =codex exec= calls used by Codex skill and audit workflows.
+~ai-agent-codex-exec-approval-policy~, ~ai-agent-codex-exec-sandbox-mode~, and ~ai-agent-codex-exec-skip-git-repo-check~ configure the non-interactive Codex calls used by skill and audit workflows. The approval policy is passed as a top-level Codex CLI option before the =exec= subcommand, while the sandbox and repository-check options are passed to =codex exec= itself.
 
 ~ai-agent-codex-debug-backtrace-model~ and ~ai-agent-codex-debug-backtrace-backend~ configure the =gptel= request used by ~ai-agent-codex-debug-backtrace~ to identify likely culprit packages from an Emacs backtrace.
 

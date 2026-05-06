@@ -134,10 +134,10 @@
         (ai-agent-codex-exec-skip-git-repo-check t))
     (should (equal
              (ai-agent-codex--build-exec-command "prompt" "/tmp/project")
-             '("codex" "--search" "exec" "--model" "gpt-5.5"
+             '("codex" "--search" "--ask-for-approval" "never"
+               "exec" "--model" "gpt-5.5"
                "--profile" "work" "--sandbox" "workspace-write"
-               "--ask-for-approval" "never" "--image" "image.png"
-               "--cd" "/tmp/project" "--color" "never"
+               "--image" "image.png" "--cd" "/tmp/project" "--color" "never"
                "--skip-git-repo-check" "prompt")))))
 
 (ert-deftest ai-agent-codex-test-run-skill-uses-codex-exec ()
