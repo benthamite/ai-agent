@@ -164,6 +164,43 @@
       (ai-agent-post-push-ci)
       (should (equal ran '("post-push-ci" "--no-push --commit abc123"))))))
 
+(ert-deftest ai-agent-test-exit-runs-before-exit-functions ()
+  "Abort exit when a before-exit function returns nil."
+  (let ((ai-agent-backends nil)
+        (ai-agent-before-exit-functions nil)
+        ran
+        seen)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (ai-agent-register-backend
+         'one
+         (ai-agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :exit (lambda () (interactive) (setq ran t))))
+        (add-hook 'ai-agent-before-exit-functions
+                  (lambda (backend buffer)
+                    (setq seen (list backend buffer))
+                    nil))
+        (ai-agent-exit)
+        (should (equal seen (list 'one buf)))
+        (should-not ran)))))
+
+(ert-deftest ai-agent-test-exit-proceeds-after-before-exit-functions ()
+  "Exit when every before-exit function returns non-nil."
+  (let ((ai-agent-backends nil)
+        (ai-agent-before-exit-functions nil)
+        ran)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (ai-agent-register-backend
+         'one
+         (ai-agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :exit (lambda () (interactive) (setq ran t))))
+        (add-hook 'ai-agent-before-exit-functions (lambda (_backend _buffer) t))
+        (ai-agent-exit)
+        (should ran)))))
+
 (ert-deftest ai-agent-test-discover-all-skills-skips-non-invocable ()
   "Do not expose skills marked `user-invocable: false'."
   (let ((ai-agent-backends nil))

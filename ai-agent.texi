@@ -203,6 +203,10 @@ the root cause, and continue the authorized CI closeout loop.
 
 The commands @code{ai-agent-handoff}, @code{ai-agent-audit-project}, @code{ai-agent-debug-backtrace}, @code{ai-agent-exit}, and @code{ai-agent-restart} resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
 
+@code{ai-agent-before-exit-functions} can delay @code{ai-agent-exit} for cleanup work.
+Each function receives the resolved backend and session buffer; returning nil
+aborts the exit.
+
 @node Claude Code commands
 @section Claude Code commands
 

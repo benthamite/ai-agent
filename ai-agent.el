@@ -41,6 +41,14 @@
   "Shared extensions for AI coding CLI tools."
   :group 'tools)
 
+(defcustom ai-agent-before-exit-functions nil
+  "Abnormal hook run before `ai-agent-exit' exits a session.
+Each function is called with two arguments: the resolved BACKEND
+symbol and the session BUFFER.  If any function returns nil, the
+exit is aborted."
+  :type 'hook
+  :group 'ai-agent)
+
 ;;;; Backend registry
 
 (defvar ai-agent-backends nil
@@ -879,6 +887,13 @@ runs and prompts for arguments as needed."
         (call-interactively fn)
       (user-error "Backend `%s' does not support `%s'" backend key))))
 
+(defun ai-agent--run-before-exit-functions (backend buffer)
+  "Return non-nil if BACKEND session BUFFER should exit."
+  (catch 'abort
+    (dolist (fn ai-agent-before-exit-functions t)
+      (unless (funcall fn backend buffer)
+        (throw 'abort nil)))))
+
 (defun ai-agent--skill-argument-candidates (skill)
   "Return completion candidates for SKILL's arguments.
 SKILL is a plist.  If the skill has an :argument-source glob,
@@ -1115,7 +1130,13 @@ must support `:run-skill'."
 Dispatches to the backend's `:exit' handler, which should
 terminate the CLI process and kill the buffer."
   (interactive)
-  (ai-agent--dispatch :exit))
+  (let* ((backend (ai-agent--resolve-backend))
+         (buffer (current-buffer))
+         (fn (ai-agent--backend-get backend :exit)))
+    (unless fn
+      (user-error "Backend `%s' does not support `:exit'" backend))
+    (when (ai-agent--run-before-exit-functions backend buffer)
+      (call-interactively fn))))
 
 ;;;###autoload
 (defun ai-agent-restart ()
