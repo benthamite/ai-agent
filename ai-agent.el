@@ -1043,6 +1043,28 @@ the backend next to each."
     (funcall run-fn (plist-get skill :name) args)))
 
 ;;;###autoload
+;;;###autoload
+(defun ai-agent-post-push-ci (&optional commit)
+  "Run the post-push CI closeout skill for COMMIT.
+When COMMIT is nil, use the current Git HEAD.  The selected backend
+must support `:run-skill'."
+  (interactive)
+  (let* ((backend (ai-agent--resolve-backend))
+         (run-fn (ai-agent--backend-get backend :run-skill))
+         (sha (or commit (ai-agent--git-head)))
+         (args (format "--no-push --commit %s" sha)))
+    (unless run-fn
+      (user-error "Backend `%s' does not support `:run-skill'" backend))
+    (funcall run-fn "post-push-ci" args)))
+
+(defun ai-agent--git-head ()
+  "Return the current Git HEAD SHA."
+  (with-temp-buffer
+    (unless (zerop (process-file "git" nil t nil "rev-parse" "HEAD"))
+      (user-error "Could not resolve Git HEAD"))
+    (string-trim (buffer-string))))
+
+;;;###autoload
 (defun ai-agent-audit-project ()
   "Run a comprehensive project audit via the appropriate backend."
   (interactive)
@@ -1132,6 +1154,7 @@ Dispatches to the backend's `:restart' handler."
     ("S" "disable scrollback" ai-agent-disable-scrollback-truncation)]
    ["Tools"
     ("s" "run skill" ai-agent-run-skill)
+    ("c" "post-push CI" ai-agent-post-push-ci)
     ("a" "audit project" ai-agent-audit-project)
     ("d" "debug backtrace" ai-agent-debug-backtrace)
     ""

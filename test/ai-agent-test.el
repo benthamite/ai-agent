@@ -149,6 +149,21 @@
       (ai-agent-run-skill)
       (should (equal ran '(two "audit" nil))))))
 
+(ert-deftest ai-agent-test-post-push-ci-runs-skill-for-head ()
+  "Run post-push CI through the selected backend with the current HEAD."
+  (let ((ai-agent-backends nil)
+        ran)
+    (ai-agent-register-backend
+     'one
+     (ai-agent-test--backend
+      :run-skill (lambda (name args) (setq ran (list name args)))))
+    (cl-letf (((symbol-function 'process-file)
+               (lambda (&rest _args)
+                 (insert "abc123\n")
+                 0)))
+      (ai-agent-post-push-ci)
+      (should (equal ran '("post-push-ci" "--no-push --commit abc123"))))))
+
 (ert-deftest ai-agent-test-discover-all-skills-skips-non-invocable ()
   "Do not expose skills marked `user-invocable: false'."
   (let ((ai-agent-backends nil))
