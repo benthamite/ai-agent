@@ -144,7 +144,7 @@ The command ~ai-agent-menu~ opens the unified transient menu. It includes shared
 
 The command ~ai-agent-start-or-switch~ is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
 
-The command ~ai-agent-run-skill~ discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend. Claude and Codex backends also scan their programmatic skill directories, so batch-only skills can be run from this command without being loaded into ordinary interactive agent sessions.
+The command ~ai-agent-run-skill~ discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend. Claude and Codex backends scan global and project-local programmatic skill directories, using both ~project-current~ and nearby tool directories as project-root signals, so batch-only skills can be run from this command without being loaded into ordinary interactive agent sessions.
 
 The commands ~ai-agent-handoff~, ~ai-agent-audit-project~, ~ai-agent-debug-backtrace~, ~ai-agent-exit~, and ~ai-agent-restart~ resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
 

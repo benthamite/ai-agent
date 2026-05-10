@@ -275,20 +275,28 @@ The :type field is a string from the hook wrapper (e.g. \"Stop\")."
 
 (defun ai-agent-codex--discover-skills ()
   "Discover available Codex skills.
-Scans the standard Codex skill directories and any custom ones
-from `ai-agent-codex-skill-directories' and
+Scans the standard Codex skill directories, project-local skill
+directories, and any custom ones from
+`ai-agent-codex-skill-directories' and
 `ai-agent-codex-programmatic-skill-directories'."
-  (let ((skills (make-hash-table :test #'equal))
-        (dirs (append
-               ;; Standard Codex skill locations
-               (list (expand-file-name "skills"
-                                       (or (getenv "CODEX_HOME") "~/.codex")))
-               ;; Project-local
-               (when-let* ((proj (project-current)))
-                 (list (expand-file-name ".agents/skills" (project-root proj))))
-               ;; Custom
-               ai-agent-codex-skill-directories
-               ai-agent-codex-programmatic-skill-directories)))
+  (let* ((skills (make-hash-table :test #'equal))
+         (project-root (or (when-let* ((proj (project-current)))
+                             (project-root proj))
+                           (locate-dominating-file default-directory ".codex")
+                           (locate-dominating-file default-directory ".git")))
+         (dirs (append
+                ;; Standard Codex skill locations
+                (list (expand-file-name "skills"
+                                        (or (getenv "CODEX_HOME") "~/.codex")))
+                ;; Project-local
+                (when project-root
+                  (list (expand-file-name ".agents/skills" project-root)
+                        (expand-file-name ".codex/skills" project-root)
+                        (expand-file-name ".codex/programmatic-skills"
+                                          project-root)))
+                ;; Custom
+                ai-agent-codex-skill-directories
+                ai-agent-codex-programmatic-skill-directories)))
     (dolist (dir dirs)
       (when (file-directory-p dir)
         (dolist (file (file-expand-wildcards

@@ -2046,16 +2046,23 @@ frontmatter."
   "Discover available Claude Code skills.
 Scans `~/.claude/skills/' for global skills and the current
 project's `.claude/skills/' for project-local skills.  Also scans
+the current project's `.claude/programmatic-skills/' and
 `ai-agent-claude-programmatic-skill-directories' for skills that
 should only be invoked through `ai-agent-run-skill'.  Returns a
 list of plists, each with keys :name, :description,
 :argument-hint, :user-invocable, :path, :source.  Project skills
 shadow global skills with the same name."
-  (let ((skills (make-hash-table :test #'equal))
-        (global-dir (expand-file-name "~/.claude/skills"))
-        (project-dir (when-let* ((proj (project-current)))
-                       (expand-file-name ".claude/skills"
-                                         (project-root proj)))))
+  (let* ((skills (make-hash-table :test #'equal))
+         (global-dir (expand-file-name "~/.claude/skills"))
+         (project-root (or (when-let* ((proj (project-current)))
+                             (project-root proj))
+                           (locate-dominating-file default-directory ".claude")
+                           (locate-dominating-file default-directory ".git")))
+         (project-dir (when project-root
+                        (expand-file-name ".claude/skills" project-root)))
+         (project-programmatic-dir
+          (when project-root
+            (expand-file-name ".claude/programmatic-skills" project-root))))
     ;; Scan global skills first
     (when (file-directory-p global-dir)
       (dolist (file (file-expand-wildcards
@@ -2072,7 +2079,9 @@ shadow global skills with the same name."
                     (name (plist-get meta :name)))
           (puthash name (append meta (list :path file :source "project"))
                    skills))))
-    (dolist (dir ai-agent-claude-programmatic-skill-directories)
+    (dolist (dir (append (when project-programmatic-dir
+                           (list project-programmatic-dir))
+                         ai-agent-claude-programmatic-skill-directories))
       (when (file-directory-p dir)
         (dolist (file (file-expand-wildcards
                        (expand-file-name "*/SKILL.md" dir)))
