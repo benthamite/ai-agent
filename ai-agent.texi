@@ -209,6 +209,13 @@ The commands @code{ai-agent-handoff}, @code{ai-agent-audit-project}, @code{ai-ag
 Each function receives the resolved backend and session buffer; returning nil
 aborts the exit.
 
+Set @code{ai-agent-before-exit-skill-name} and
+@code{ai-agent-before-exit-skill-directories} to submit an interactive skill before
+exiting matching sessions. @code{ai-agent-run-skill-before-exit} uses
+@code{ai-agent-skill-command-prefix-alist} so Claude sessions receive slash commands
+and Codex sessions receive dollar-prefixed skill commands, then submits the
+command and delays exit until the next @code{ai-agent-exit} call.
+
 @node Claude Code commands
 @section Claude Code commands
 

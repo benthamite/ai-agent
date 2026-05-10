@@ -49,6 +49,27 @@ exit is aborted."
   :type 'hook
   :group 'ai-agent)
 
+(defcustom ai-agent-before-exit-skill-name nil
+  "Skill name to submit before exiting matching AI sessions.
+When nil or empty, `ai-agent-run-skill-before-exit' does nothing."
+  :type '(choice (const :tag "Disabled" nil) string)
+  :group 'ai-agent)
+
+(defcustom ai-agent-before-exit-skill-directories nil
+  "Directories whose sessions should run `ai-agent-before-exit-skill-name'."
+  :type '(repeat directory)
+  :group 'ai-agent)
+
+(defcustom ai-agent-skill-command-prefix-alist
+  '((claude-code . "/")
+    (codex . "$"))
+  "Alist mapping backend symbols to interactive skill command prefixes."
+  :type '(alist :key-type symbol :value-type string)
+  :group 'ai-agent)
+
+(defvar-local ai-agent--before-exit-skill-sent nil
+  "Non-nil when the configured before-exit skill was sent in this buffer.")
+
 ;;;; Backend registry
 
 (defvar ai-agent-backends nil
@@ -894,6 +915,50 @@ runs and prompts for arguments as needed."
       (unless (funcall fn backend buffer)
         (throw 'abort nil)))))
 
+(defun ai-agent-run-skill-before-exit (backend buffer)
+  "Run `ai-agent-before-exit-skill-name' before exiting BUFFER.
+BACKEND is the resolved `ai-agent' backend.  Return nil when a
+skill command was submitted and exit should be delayed."
+  (with-current-buffer buffer
+    (if (or ai-agent--before-exit-skill-sent
+            (not (ai-agent--before-exit-skill-configured-p))
+            (not (ai-agent--before-exit-skill-directory-p backend buffer)))
+        t
+      (let ((command (ai-agent--before-exit-skill-command backend))
+            (send-command-fn (ai-agent--backend-get backend :send-command)))
+        (if (not (and command send-command-fn))
+            t
+          (setq-local ai-agent--before-exit-skill-sent t)
+          (funcall send-command-fn command buffer)
+          (when-let* ((send-return-fn (ai-agent--backend-get backend :send-return)))
+            (funcall send-return-fn buffer))
+          (message "Started %s; run ai-agent-exit again to close this session."
+                   command)
+          nil)))))
+
+(defun ai-agent--before-exit-skill-configured-p ()
+  "Return non-nil when a before-exit skill is configured."
+  (and ai-agent-before-exit-skill-name
+       (not (string-empty-p ai-agent-before-exit-skill-name))))
+
+(defun ai-agent--before-exit-skill-directory-p (backend buffer)
+  "Return non-nil if BACKEND session BUFFER is in a configured directory."
+  (when-let* ((directory (ai-agent--buffer-directory backend buffer)))
+    (cl-some (lambda (candidate)
+               (file-in-directory-p directory (file-truename candidate)))
+             ai-agent-before-exit-skill-directories)))
+
+(defun ai-agent--buffer-directory (backend buffer)
+  "Return the normalized directory for BACKEND session BUFFER."
+  (when-let* ((directory-fn (ai-agent--backend-get backend :directory))
+              (directory (funcall directory-fn buffer)))
+    (file-name-as-directory (file-truename directory))))
+
+(defun ai-agent--before-exit-skill-command (backend)
+  "Return the interactive before-exit skill command for BACKEND."
+  (when-let* ((prefix (alist-get backend ai-agent-skill-command-prefix-alist)))
+    (concat prefix ai-agent-before-exit-skill-name)))
+
 (defun ai-agent--skill-argument-candidates (skill)
   "Return completion candidates for SKILL's arguments.
 SKILL is a plist.  If the skill has an :argument-source glob,
@@ -1216,6 +1281,7 @@ Dispatches to the backend's `:restart' handler."
   :description "sync theme")
 
 (add-hook 'enable-theme-functions #'ai-agent-sync-theme)
+(add-hook 'ai-agent-before-exit-functions #'ai-agent-run-skill-before-exit)
 
 ;;;; Provide
 

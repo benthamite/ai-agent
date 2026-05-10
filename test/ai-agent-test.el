@@ -201,6 +201,86 @@
         (ai-agent-exit)
         (should ran)))))
 
+(ert-deftest ai-agent-test-run-skill-before-exit-submits-codex-skill ()
+  "Submit a Codex skill and abort the first exit in matching directories."
+  (let ((ai-agent-backends nil)
+        (ai-agent-before-exit-skill-name "session-retro")
+        (ai-agent-before-exit-skill-directories nil)
+        events)
+    (with-temp-buffer
+      (let* ((dir (file-name-as-directory default-directory))
+             (buf (current-buffer))
+             (ai-agent-before-exit-skill-directories (list dir)))
+        (ai-agent-register-backend
+         'codex
+         (ai-agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) dir)
+          :send-command (lambda (cmd &optional _buffer)
+                          (push (list 'command cmd) events))
+          :send-return (lambda (&optional _buffer) (push 'return events))))
+        (should-not (ai-agent-run-skill-before-exit 'codex buf))
+        (should (equal (nreverse events)
+                       '((command "$session-retro") return)))
+        (should ai-agent--before-exit-skill-sent)
+        (should (ai-agent-run-skill-before-exit 'codex buf))))))
+
+(ert-deftest ai-agent-test-run-skill-before-exit-uses-claude-slash ()
+  "Submit Claude skills with slash syntax."
+  (let ((ai-agent-backends nil)
+        (ai-agent-before-exit-skill-name "session-retro")
+        (events nil))
+    (with-temp-buffer
+      (let* ((dir (file-name-as-directory default-directory))
+             (buf (current-buffer))
+             (ai-agent-before-exit-skill-directories (list dir)))
+        (ai-agent-register-backend
+         'claude-code
+         (ai-agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) dir)
+          :send-command (lambda (cmd &optional _buffer)
+                          (push (list 'command cmd) events))
+          :send-return (lambda (&optional _buffer) (push 'return events))))
+        (should-not (ai-agent-run-skill-before-exit 'claude-code buf))
+        (should (equal (nreverse events)
+                       '((command "/session-retro") return)))))))
+
+(ert-deftest ai-agent-test-run-skill-before-exit-skips-other-directories ()
+  "Do not submit before-exit skills outside configured directories."
+  (let ((ai-agent-backends nil)
+        (ai-agent-before-exit-skill-name "session-retro")
+        (ai-agent-before-exit-skill-directories '("/tmp/not-this-repo/"))
+        called)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (ai-agent-register-backend
+         'codex
+         (ai-agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) default-directory)
+          :send-command (lambda (&rest _args) (setq called t))))
+        (should (ai-agent-run-skill-before-exit 'codex buf))
+        (should-not called)))))
+
+(ert-deftest ai-agent-test-run-skill-before-exit-skips-unknown-backends ()
+  "Do not abort exit when BACKEND has no skill command prefix."
+  (let ((ai-agent-backends nil)
+        (ai-agent-before-exit-skill-name "session-retro")
+        called)
+    (with-temp-buffer
+      (let* ((dir (file-name-as-directory default-directory))
+             (buf (current-buffer))
+             (ai-agent-before-exit-skill-directories (list dir)))
+        (ai-agent-register-backend
+         'other
+         (ai-agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) dir)
+          :send-command (lambda (&rest _args) (setq called t))))
+        (should (ai-agent-run-skill-before-exit 'other buf))
+        (should-not called)))))
+
 (ert-deftest ai-agent-test-discover-all-skills-skips-non-invocable ()
   "Do not expose skills marked `user-invocable: false'."
   (let ((ai-agent-backends nil))
