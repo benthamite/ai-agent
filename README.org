@@ -101,6 +101,8 @@ Claude hook setup is explicit. ~ai-agent-claude-settings-file~ names the setting
 :END:
 
 #+vindex: ai-agent-codex-handoff-file
+#+vindex: ai-agent-codex-accounts
+#+vindex: ai-agent-codex-account-file
 #+vindex: ai-agent-codex-skill-directories
 #+vindex: ai-agent-codex-audit-skills
 #+vindex: ai-agent-codex-audit-project-directories
@@ -109,7 +111,7 @@ Claude hook setup is explicit. ~ai-agent-claude-settings-file~ names the setting
 #+vindex: ai-agent-codex-exec-skip-git-repo-check
 #+vindex: ai-agent-codex-debug-backtrace-model
 #+vindex: ai-agent-codex-debug-backtrace-backend
-The Codex backend options control handoff, skill discovery, non-interactive execution, project auditing, and backtrace debugging. ~ai-agent-codex-handoff-file~ defaults to a file in ~temporary-file-directory~ and is read by ~ai-agent-codex-handoff~ after the Codex handoff skill writes next-session instructions.
+The Codex backend options control account selection, handoff, skill discovery, non-interactive execution, project auditing, and backtrace debugging. ~ai-agent-codex-accounts~ is an alist of account names to Codex home directories, and ~ai-agent-codex-account-file~ stores the selected account across Emacs sessions. Use ~ai-agent-codex-select-account~ or the Codex account infix in ~ai-agent-menu~ to switch accounts before starting a new session. ~ai-agent-codex-handoff-file~ defaults to a file in ~temporary-file-directory~ and is read by ~ai-agent-codex-handoff~ after the Codex handoff skill writes next-session instructions.
 
 ~ai-agent-codex-skill-directories~ is a list of additional directories scanned for Codex skills. The backend also scans standard Codex skill locations and project-local skill directories. ~ai-agent-codex-audit-skills~ defaults to the code, design, and interpretability audit skills, while ~ai-agent-codex-audit-project-directories~ stores completion candidates for the audit directory prompt.
 
@@ -193,6 +195,7 @@ The setup command ~ai-agent-claude-setup-config~ ensures that Claude's statuslin
 :END:
 
 #+findex: ai-agent-codex-start-or-switch
+#+findex: ai-agent-codex-select-account
 #+findex: ai-agent-codex-run-skill
 #+findex: ai-agent-codex-audit-project
 #+findex: ai-agent-codex-debug-backtrace
@@ -202,7 +205,7 @@ The setup command ~ai-agent-claude-setup-config~ ensures that Claude's statuslin
 #+findex: ai-agent-codex-resume
 #+findex: ai-agent-codex-fork
 #+findex: ai-agent-codex-setup-kill-on-exit
-The Codex commands mirror the shared workflows for the Codex CLI. ~ai-agent-codex-start-or-switch~ starts Codex when no Codex sessions exist, otherwise it opens the shared switcher. ~ai-agent-codex-run-skill~ runs a skill non-interactively with =codex exec=, using local skill metadata when available and falling back to a slash invocation otherwise. Additional programmatic skill directories are configured through ~ai-agent-codex-programmatic-skill-directories~.
+The Codex commands mirror the shared workflows for the Codex CLI. ~ai-agent-codex-start-or-switch~ starts Codex under the selected account when no Codex sessions exist, otherwise it opens the shared switcher. ~ai-agent-codex-select-account~ persists an account choice by name and applies it to new interactive sessions and non-interactive =codex exec= runs. ~ai-agent-codex-run-skill~ runs a skill non-interactively with =codex exec=, using local skill metadata when available and falling back to a slash invocation otherwise. Additional programmatic skill directories are configured through ~ai-agent-codex-programmatic-skill-directories~.
 
 ~ai-agent-codex-audit-project~ prompts for a project directory and runs each configured audit skill sequentially through =codex exec=. ~ai-agent-codex-debug-backtrace~ saves the current Emacs backtrace, asks =gptel= to identify likely packages, and starts a Codex session in the selected package source directory with instructions to fix the bug.
 

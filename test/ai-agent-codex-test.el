@@ -8,6 +8,65 @@
 (require 'cl-lib)
 (require 'ai-agent-codex)
 
+;;;; Account selection
+
+(ert-deftest ai-agent-codex-test-account-env-uses-pending-account ()
+  "Set CODEX_HOME from the dynamically bound pending account."
+  (let* ((dir (make-temp-file "codex-account" t))
+         (home (expand-file-name "work" dir))
+         (ai-agent-codex-accounts `(("work" . ,home)))
+         (ai-agent-codex--pending-account "work"))
+    (unwind-protect
+        (should (equal (ai-agent-codex-account-env "*codex*" dir)
+                       (list (format "CODEX_HOME=%s" home))))
+      (delete-directory dir t))))
+
+(ert-deftest ai-agent-codex-test-load-account-ignores-stale-selection ()
+  "Ignore account-file contents not present in configured accounts."
+  (let* ((dir (make-temp-file "codex-account" t))
+         (file (expand-file-name "current" dir))
+         (ai-agent-codex-account-file file)
+         (ai-agent-codex-accounts `(("work" . ,(expand-file-name "work" dir)))))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "missing\n"))
+          (should-not (ai-agent-codex--load-account)))
+      (delete-directory dir t))))
+
+(ert-deftest ai-agent-codex-test-read-config-model-uses-account-home ()
+  "Read model configuration from the selected account's CODEX_HOME."
+  (let* ((dir (make-temp-file "codex-account" t))
+         (home (expand-file-name "work" dir))
+         (config (expand-file-name "config.toml" home))
+         (ai-agent-codex-accounts `(("work" . ,home)))
+         (ai-agent-codex--config-model-cache nil))
+    (unwind-protect
+        (progn
+          (make-directory home t)
+          (with-temp-file config
+            (insert "model = \"gpt-5.5\"\n"))
+          (should (equal (ai-agent-codex--read-config-model "work")
+                         "gpt-5.5")))
+      (delete-directory dir t))))
+
+(ert-deftest ai-agent-codex-test-restart-preserves-buffer-account ()
+  "Restart Codex with the account attached to the current session."
+  (let (captured-account)
+    (with-temp-buffer
+      (rename-buffer "*codex:~/project/:default*" t)
+      (setq-local ai-agent-codex--buffer-account "work")
+      (cl-letf (((symbol-function 'codex--buffer-p) (lambda (_buffer) t))
+                ((symbol-function 'ai-agent--force-kill-buffer) #'ignore)
+                ((symbol-function 'ai-agent-codex--resolve-account)
+                 (lambda () (error "should not resolve active account")))
+                ((symbol-function 'codex--directory) (lambda () default-directory))
+                ((symbol-function 'codex--start-subcommand)
+                 (lambda (&rest _)
+                   (setq captured-account ai-agent-codex--pending-account))))
+        (ai-agent-codex-restart)))
+    (should (equal captured-account "work"))))
+
 ;;;; Theme sync
 
 (ert-deftest ai-agent-codex-test-sync-theme-updates-existing-tui-section ()
@@ -76,6 +135,26 @@
                      (buffer-string)))))
       (delete-directory dir t))))
 
+(ert-deftest ai-agent-codex-test-sync-theme-uses-pending-account-home ()
+  "Persist theme changes to the pending account's Codex config."
+  (let* ((dir (make-temp-file "codex-theme" t))
+         (home (expand-file-name "work" dir))
+         (config (expand-file-name "config.toml" home))
+         (ai-agent-codex-accounts `(("work" . ,home)))
+         (ai-agent-codex--pending-account "work"))
+    (unwind-protect
+        (progn
+          (make-directory home t)
+          (with-temp-file config
+            (insert "[tui]\ntheme = \"light\"\n"))
+          (should (ai-agent-codex--sync-theme "dark"))
+          (should (string-match-p
+                   "^\\[tui\\]\ntheme = \"dark\""
+                   (with-temp-buffer
+                     (insert-file-contents config)
+                     (buffer-string)))))
+      (delete-directory dir t))))
+
 ;;;; Skill runner
 
 (ert-deftest ai-agent-codex-test-parse-skill-frontmatter-argument-metadata ()
@@ -105,7 +184,9 @@
          (hidden (expand-file-name "hidden/SKILL.md" dir))
          (process-environment
           (cons (format "CODEX_HOME=%s" codex-home) process-environment))
-         (ai-agent-codex-skill-directories (list dir)))
+         (ai-agent-codex-skill-directories (list dir))
+         (ai-agent-codex-programmatic-skill-directories nil)
+         (default-directory dir))
     (unwind-protect
         (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil)))
           (make-directory (file-name-directory visible) t)

@@ -46,6 +46,30 @@
   :type 'file
   :group 'ai-agent-codex)
 
+(defcustom ai-agent-codex-accounts nil
+  "Alist of account names to Codex home directories.
+Each entry is (NAME . CODEX-HOME).  When non-nil,
+`ai-agent-codex-start-or-switch' uses the persisted account
+selection and sets `CODEX_HOME' accordingly so each account
+maintains its own credentials, config, sessions, and history.
+
+Use `ai-agent-codex-select-account' to change the active account.
+The selection persists in `ai-agent-codex-account-file'.
+
+Example:
+  \\='((\"personal\" . \"~/.codex-personal\")
+    (\"work\"     . \"~/.codex-work\"))"
+  :type '(alist :key-type string :value-type directory)
+  :group 'ai-agent-codex)
+
+(defcustom ai-agent-codex-account-file
+  (expand-file-name ".codex-current-account" "~")
+  "File storing the name of the currently active Codex account.
+The file contains a single account name from `ai-agent-codex-accounts'.
+Written by `ai-agent-codex-select-account', read at session start."
+  :type 'file
+  :group 'ai-agent-codex)
+
 (defcustom ai-agent-codex-skill-directories nil
   "Additional directories to scan for Codex skills.
 Searched in addition to the standard locations."
@@ -110,6 +134,21 @@ When nil, use `codex-sandbox-mode' or the CLI default."
 (declare-function ai-agent-svg-icon "ai-agent" (svg-data &optional face))
 (declare-function gptel-request "gptel")
 
+(defvar ai-agent-codex--current-account nil
+  "Currently active Codex account name.
+Loaded from `ai-agent-codex-account-file' on first use;
+changed by `ai-agent-codex-select-account'.")
+
+(defvar ai-agent-codex--pending-account nil
+  "Account name for the current `codex' invocation.
+Dynamically bound by `ai-agent-codex--start-with-account';
+read by `ai-agent-codex-account-env'.")
+
+(defvar-local ai-agent-codex--buffer-account nil
+  "Account name that was active when this buffer's session started.
+Set by `ai-agent-codex--capture-buffer-account' via
+`codex-start-hook'.")
+
 ;;;; Backend registration
 
 (defconst ai-agent-codex-icon-svg
@@ -126,12 +165,14 @@ Source: SVG Repo (CC0).")
         :extract-instance-name #'codex--extract-instance-name-from-buffer-name
         :send-command (lambda (cmd &optional _buf) (codex--do-send-command cmd))
         :start #'codex--start
-        :start-new #'codex
+        :start-new #'ai-agent-codex--start-with-account
         :program "codex"
         :send-return (lambda (&optional _buf)
                        (codex--term-send-return codex-terminal-backend))
         :icon (lambda (&optional face) (let ((svg (ai-agent-svg-icon ai-agent-codex-icon-svg face)))
                                         (if (string-empty-p svg) "CX" svg)))
+        :account (lambda (buf)
+                   (buffer-local-value 'ai-agent-codex--buffer-account buf))
         :label "Codex"
         :discover-skills #'ai-agent-codex--discover-skills
         :handoff #'ai-agent-codex-handoff
@@ -145,6 +186,102 @@ Source: SVG Repo (CC0).")
 
 ;;;; Functions
 
+;;;;; Account selection
+
+(defun ai-agent-codex-account-env (_buffer-name _dir)
+  "Return environment variables for the session being started.
+Sets `CODEX_HOME' based on `ai-agent-codex-accounts'.  Prefers
+the dynamically bound `ai-agent-codex--pending-account' and falls
+back to the persisted active account via
+`ai-agent-codex--resolve-account', so callers that invoke
+`codex--start' directly still get the right account."
+  (when-let* ((account (or ai-agent-codex--pending-account
+                           (ai-agent-codex--resolve-account)))
+              (home (ai-agent-codex--account-home account)))
+    (list (format "CODEX_HOME=%s" home))))
+
+(defun ai-agent-codex--account-home (account)
+  "Return the expanded Codex home directory for ACCOUNT, or nil."
+  (when-let* ((home (alist-get account ai-agent-codex-accounts
+                               nil nil #'string=)))
+    (expand-file-name home)))
+
+(defun ai-agent-codex--config-file (&optional account)
+  "Return the config.toml path for ACCOUNT or the default Codex config."
+  (if-let* ((home (and account (ai-agent-codex--account-home account))))
+      (expand-file-name "config.toml" home)
+    (expand-file-name codex-hooks-config-path)))
+
+(defun ai-agent-codex--load-account ()
+  "Load the current account from `ai-agent-codex-account-file'.
+Return the account name, or nil if the file is missing or stale."
+  (when (file-exists-p ai-agent-codex-account-file)
+    (let ((name (string-trim
+                 (with-temp-buffer
+                   (insert-file-contents ai-agent-codex-account-file)
+                   (buffer-string)))))
+      (when (alist-get name ai-agent-codex-accounts nil nil #'string=)
+        name))))
+
+(defun ai-agent-codex--save-account (name)
+  "Persist NAME as the active account to `ai-agent-codex-account-file'."
+  (with-temp-file ai-agent-codex-account-file
+    (insert name "\n"))
+  (setq ai-agent-codex--current-account name))
+
+(defun ai-agent-codex--prompt-account ()
+  "Prompt for an account from `ai-agent-codex-accounts'.
+Return the account name, or nil."
+  (when ai-agent-codex-accounts
+    (let ((names (mapcar #'car ai-agent-codex-accounts)))
+      (if (= (length names) 1)
+          (car names)
+        (completing-read "Account: " names nil t)))))
+
+(defun ai-agent-codex--resolve-account ()
+  "Return the active account, loading from disk or prompting as needed.
+On first use, loads from `ai-agent-codex-account-file'.  If no
+persisted account exists, prompts once and saves the selection."
+  (when ai-agent-codex-accounts
+    (unless ai-agent-codex--current-account
+      (setq ai-agent-codex--current-account
+            (ai-agent-codex--load-account)))
+    (or ai-agent-codex--current-account
+        (let ((account (ai-agent-codex--prompt-account)))
+          (when account
+            (ai-agent-codex--save-account account))
+          account))))
+
+;;;###autoload
+(defun ai-agent-codex-select-account ()
+  "Switch the active Codex account.
+Prompts for an account from `ai-agent-codex-accounts' and
+persists the selection.  New sessions will use this account."
+  (interactive)
+  (unless ai-agent-codex-accounts
+    (user-error "No accounts configured in `ai-agent-codex-accounts'"))
+  (let ((account (ai-agent-codex--prompt-account)))
+    (when account
+      (ai-agent-codex--save-account account)
+      (message "Switched to account: %s" account))))
+
+(defun ai-agent-codex--start-with-account ()
+  "Start a new Codex session using the active account."
+  (interactive)
+  (let* ((account (ai-agent-codex--resolve-account))
+         (ai-agent-codex--pending-account account))
+    (codex)))
+
+(defun ai-agent-codex--capture-buffer-account ()
+  "Store the account name as a buffer-local variable."
+  (setq ai-agent-codex--buffer-account
+        (or ai-agent-codex--pending-account
+            (ai-agent-codex--resolve-account))))
+
+(defun ai-agent-codex-buffer-account ()
+  "Return the account name for the current buffer, or nil."
+  ai-agent-codex--buffer-account)
+
 ;;;;; Mode line
 
 (declare-function doom-modeline-set-modeline "doom-modeline-core")
@@ -153,30 +290,33 @@ Source: SVG Repo (CC0).")
   "Time when this Codex session started.")
 
 (defvar ai-agent-codex--config-model-cache nil
-  "Cached model lookup as (MTIME . MODEL) for `~/.codex/config.toml'.")
+  "Cached model lookup as (CONFIG MTIME . MODEL) for Codex config.")
 
-(defun ai-agent-codex--parse-config-model (config)
-  "Return the model string declared in CONFIG, or nil."
+(defun ai-agent-codex--parse-config-model (config-file)
+  "Return the model string declared in CONFIG-FILE, or nil."
   (with-temp-buffer
-    (insert-file-contents config)
+    (insert-file-contents config-file)
     (goto-char (point-min))
     (when (re-search-forward "^model *= *\"\\([^\"]+\\)\"" nil t)
       (match-string 1))))
 
-(defun ai-agent-codex--read-config-model ()
-  "Read the model from `~/.codex/config.toml'.
+(defun ai-agent-codex--read-config-model (&optional account)
+  "Read the model from ACCOUNT's Codex config.
 Cached by file modification time so the doom-modeline ai-session
 segment does not perform disk I/O on every redisplay."
-  (let* ((config (expand-file-name "~/.codex/config.toml"))
-         (mtime (file-attribute-modification-time (file-attributes config))))
+  (let* ((config-file (ai-agent-codex--config-file account))
+         (mtime (file-attribute-modification-time
+                 (file-attributes config-file))))
     (cond
      ((null mtime) nil)
      ((and ai-agent-codex--config-model-cache
-           (equal mtime (car ai-agent-codex--config-model-cache)))
-      (cdr ai-agent-codex--config-model-cache))
+           (equal config-file (nth 0 ai-agent-codex--config-model-cache))
+           (equal mtime (nth 1 ai-agent-codex--config-model-cache)))
+      (nth 2 ai-agent-codex--config-model-cache))
      (t
-      (let ((model (ai-agent-codex--parse-config-model config)))
-        (setq ai-agent-codex--config-model-cache (cons mtime model))
+      (let ((model (ai-agent-codex--parse-config-model config-file)))
+        (setq ai-agent-codex--config-model-cache
+              (list config-file mtime model))
         model)))))
 
 (defun ai-agent-codex-set-modeline ()
@@ -189,7 +329,7 @@ Also records the session start time."
 
 (defun ai-agent-codex-status-model ()
   "Return the model name for the current Codex session."
-  (ai-agent-codex--read-config-model))
+  (ai-agent-codex--read-config-model ai-agent-codex--buffer-account))
 
 (defun ai-agent-codex-status-duration-ms ()
   "Return session duration in milliseconds, or nil."
@@ -207,11 +347,13 @@ config file changed."
   (ai-agent-codex--sync-theme-to-config theme))
 
 (defun ai-agent-codex--sync-theme-to-config (&optional theme)
-  "Update `tui.theme' in `codex-hooks-config-path' to THEME.
+  "Update `tui.theme' in the active Codex config to THEME.
 When THEME is nil, use the current Emacs AI theme.  Only writes
 the file when the theme value actually changes."
   (let* ((theme (or theme (ai-agent--theme)))
-         (config-file (expand-file-name codex-hooks-config-path))
+         (config-file (ai-agent-codex--config-file
+                       (or ai-agent-codex--pending-account
+                           ai-agent-codex--buffer-account)))
          (new-line (format "theme = \"%s\"" theme)))
     (make-directory (file-name-directory config-file) t)
     (with-temp-buffer
@@ -639,13 +781,18 @@ via `codex exec'."
                    (insert-file-contents ai-agent-codex-handoff-file)
                    (string-trim (buffer-string))))
          (source-buffer (ai-agent-codex--handoff-source-buffer buffer-name))
+         (account (when source-buffer
+                    (buffer-local-value 'ai-agent-codex--buffer-account
+                                        source-buffer)))
          (dir (ai-agent-codex--handoff-directory source-buffer)))
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty"))
     (when source-buffer
       (ai-agent--force-kill-buffer source-buffer))
-    (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
-      (codex--start nil (list prompt) nil t))))
+    (let ((ai-agent-codex--pending-account
+           (or account (ai-agent-codex--resolve-account))))
+      (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
+        (codex--start nil (list prompt) nil t)))))
 
 (defun ai-agent-codex-handoff-from-emacsclient ()
   "Run `ai-agent-codex-handoff' for the client-provided buffer name.
@@ -689,11 +836,14 @@ the most recently updated one for that directory."
   (unless (codex--buffer-p (current-buffer))
     (user-error "Not in a Codex buffer"))
   (let ((dir default-directory)
+        (account ai-agent-codex--buffer-account)
         (instance-name (codex--extract-instance-name-from-buffer-name
                         (buffer-name))))
     (ai-agent--force-kill-buffer (current-buffer))
-    (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
-      (codex--start-subcommand "resume" t nil instance-name))))
+    (let ((ai-agent-codex--pending-account
+           (or account (ai-agent-codex--resolve-account))))
+      (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
+        (codex--start-subcommand "resume" t nil instance-name)))))
 
 ;;;;; Start or switch (Codex-specific entry point)
 
@@ -704,7 +854,7 @@ If no Codex sessions exist, start a new one.  Otherwise, show the
 unified session switcher."
   (interactive)
   (if (null (codex--find-all-codex-buffers))
-      (codex)
+      (ai-agent-codex--start-with-account)
     (ai-agent--ensure-all-session-keys)
     (transient-setup 'ai-agent--session-switcher)))
 
@@ -733,7 +883,10 @@ With prefix ARG, use Codex CLI's `--last' flag."
 (add-hook 'codex-start-hook #'ai-agent-disable-scrollback-truncation)
 (add-hook 'codex-start-hook #'ai-agent-setup-snippet-keys)
 (add-hook 'codex-start-hook #'ai-agent-fix-rendering)
+(add-hook 'codex-start-hook #'ai-agent-codex--capture-buffer-account)
 (add-hook 'codex-start-hook #'ai-agent-codex-set-modeline)
+(add-hook 'codex-process-environment-functions
+          #'ai-agent-codex-account-env)
 (add-hook 'codex-process-environment-functions
           #'ai-agent-codex--sync-theme-before-start)
 (add-hook 'kill-buffer-hook #'ai-agent--release-session-key)
@@ -781,13 +934,44 @@ Emacs side to match Claude Code's behavior."
 (add-hook 'codex-start-hook #'ai-agent-codex-setup-kill-on-exit)
 (advice-add 'codex--do-send-command :around #'ai-agent-codex--intercept-exit)
 
+;;;;; Account menu infix
+
+(eval-and-compile
+  (defclass ai-agent-codex--account-variable (transient-lisp-variable)
+    ()
+    "An infix that displays and selects the active Codex account."))
+
+(cl-defmethod transient-infix-read ((_obj ai-agent-codex--account-variable))
+  "Prompt for a Codex account."
+  (ai-agent-codex--prompt-account))
+
+(cl-defmethod transient-infix-set ((obj ai-agent-codex--account-variable) value)
+  "Set the account variable and persist VALUE to disk."
+  (set (oref obj variable) value)
+  (when value
+    (ai-agent-codex--save-account value)))
+
+(cl-defmethod transient-init-value ((obj ai-agent-codex--account-variable))
+  "Initialize Codex account infix from persisted state."
+  (unless (oref obj value)
+    (set (oref obj variable) (ai-agent-codex--load-account)))
+  (cl-call-next-method obj))
+
+(transient-define-infix ai-agent-codex--infix-account ()
+  "Select the active Codex account."
+  :class 'ai-agent-codex--account-variable
+  :variable 'ai-agent-codex--current-account
+  :description "codex account")
+
 ;;;;; Extend unified menu
 
 (with-eval-after-load 'ai-agent
   (transient-append-suffix 'ai-agent-menu "x"
     '("R" "codex resume" ai-agent-codex-resume))
   (transient-append-suffix 'ai-agent-menu "R"
-    '("F" "codex fork" ai-agent-codex-fork)))
+    '("F" "codex fork" ai-agent-codex-fork))
+  (transient-append-suffix 'ai-agent-menu "-t"
+    '("-C" ai-agent-codex--infix-account)))
 
 ;;;; Provide
 

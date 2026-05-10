@@ -2,7 +2,7 @@
 
 `ai-agent` collects the Emacs integration layer for AI coding command-line tools. It provides a shared session switcher, notifications, theme synchronization, terminal fixes, skill execution, and backend modules for Claude Code and Codex.
 
-The package is for Emacs users who run AI coding agents inside terminal buffers and want one coherent interface instead of separate menus and keybindings per CLI. The core package handles backend registration and shared commands; `ai-agent-claude` adds Claude account switching, status polling, usage polling, branch navigation, batch TODO execution, and hook setup; `ai-agent-codex` adds Codex skill running, handoff, auditing, debugging, and modeline helpers.
+The package is for Emacs users who run AI coding agents inside terminal buffers and want one coherent interface instead of separate menus and keybindings per CLI. The core package handles backend registration and shared commands; `ai-agent-claude` adds Claude account switching, status polling, usage polling, branch navigation, batch TODO execution, and hook setup; `ai-agent-codex` adds Codex account switching, skill running, handoff, auditing, debugging, and modeline helpers.
 
 ## Installation
 
