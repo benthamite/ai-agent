@@ -144,7 +144,7 @@ The command ~ai-agent-menu~ opens the unified transient menu. It includes shared
 
 The command ~ai-agent-start-or-switch~ is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
 
-The command ~ai-agent-run-skill~ discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend.
+The command ~ai-agent-run-skill~ discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend. Claude and Codex backends also scan their programmatic skill directories, so batch-only skills can be run from this command without being loaded into ordinary interactive agent sessions.
 
 The commands ~ai-agent-handoff~, ~ai-agent-audit-project~, ~ai-agent-debug-backtrace~, ~ai-agent-exit~, and ~ai-agent-restart~ resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
 
@@ -192,7 +192,7 @@ The setup command ~ai-agent-claude-setup-config~ ensures that Claude's statuslin
 #+findex: ai-agent-codex-resume
 #+findex: ai-agent-codex-fork
 #+findex: ai-agent-codex-setup-kill-on-exit
-The Codex commands mirror the shared workflows for the Codex CLI. ~ai-agent-codex-start-or-switch~ starts Codex when no Codex sessions exist, otherwise it opens the shared switcher. ~ai-agent-codex-run-skill~ runs a skill non-interactively with =codex exec=, using local skill metadata when available and falling back to a slash invocation otherwise.
+The Codex commands mirror the shared workflows for the Codex CLI. ~ai-agent-codex-start-or-switch~ starts Codex when no Codex sessions exist, otherwise it opens the shared switcher. ~ai-agent-codex-run-skill~ runs a skill non-interactively with =codex exec=, using local skill metadata when available and falling back to a slash invocation otherwise. Additional programmatic skill directories are configured through ~ai-agent-codex-programmatic-skill-directories~.
 
 ~ai-agent-codex-audit-project~ prompts for a project directory and runs each configured audit skill sequentially through =codex exec=. ~ai-agent-codex-debug-backtrace~ saves the current Emacs backtrace, asks =gptel= to identify likely packages, and starts a Codex session in the selected package source directory with instructions to fix the bug.
 

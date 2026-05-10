@@ -40,6 +40,13 @@
   "Extensions for `claude-code'."
   :group 'claude-code)
 
+(defcustom ai-agent-claude-programmatic-skill-directories
+  (list (expand-file-name "~/.claude/programmatic-skills"))
+  "Directories to scan for skills run only by `ai-agent-run-skill'.
+These directories are not loaded by ordinary Claude Code sessions."
+  :type '(repeat directory)
+  :group 'ai-agent-claude)
+
 (defcustom ai-agent-claude-warn-kill-with-branches t
   "When non-nil, warn before killing a session that has branches.
 If the session being killed is the root of a branch tree with
@@ -2038,7 +2045,9 @@ frontmatter."
 (defun ai-agent-claude--discover-skills ()
   "Discover available Claude Code skills.
 Scans `~/.claude/skills/' for global skills and the current
-project's `.claude/skills/' for project-local skills.  Returns a
+project's `.claude/skills/' for project-local skills.  Also scans
+`ai-agent-claude-programmatic-skill-directories' for skills that
+should only be invoked through `ai-agent-run-skill'.  Returns a
 list of plists, each with keys :name, :description,
 :argument-hint, :user-invocable, :path, :source.  Project skills
 shadow global skills with the same name."
@@ -2063,6 +2072,15 @@ shadow global skills with the same name."
                     (name (plist-get meta :name)))
           (puthash name (append meta (list :path file :source "project"))
                    skills))))
+    (dolist (dir ai-agent-claude-programmatic-skill-directories)
+      (when (file-directory-p dir)
+        (dolist (file (file-expand-wildcards
+                       (expand-file-name "*/SKILL.md" dir)))
+          (when-let* ((meta (ai-agent-claude--parse-skill-frontmatter file))
+                      (name (plist-get meta :name)))
+            (puthash name
+                     (append meta (list :path file :source "programmatic"))
+                     skills)))))
     ;; Filter to user-invocable and collect
     (let (result)
       (maphash (lambda (_name skill)
@@ -2176,9 +2194,7 @@ argument-source."
                          :test #'equal))
          (model (or (and skill (plist-get skill :model))
                     ai-agent-claude-run-skill-model))
-         (prompt (if (and arguments (not (string-empty-p arguments)))
-                     (format "/%s %s" skill-name arguments)
-                   (format "/%s" skill-name)))
+         (prompt (ai-agent-claude--skill-prompt skill skill-name arguments))
          (buffers-before (buffer-list)))
     (message "Running /%s%s..." skill-name
              (if (and skill (plist-get skill :model))
@@ -2190,7 +2206,32 @@ argument-source."
      :callback
      (lambda (result)
        (ai-agent-claude--skill-display-result
-        skill-name result buffers-before)))))
+       skill-name result buffers-before)))))
+
+(defun ai-agent-claude--skill-prompt (skill skill-name arguments)
+  "Return a Claude prompt for SKILL-NAME with ARGUMENTS.
+When SKILL comes from a programmatic-only directory, point Claude
+at the skill file directly instead of using a slash invocation."
+  (if (and skill (equal (plist-get skill :source) "programmatic"))
+      (format (string-join
+               '("Run the Claude skill `%s`%s."
+                 ""
+                 "Skill file: %s"
+                 ""
+                 "Read the skill file first and follow its instructions exactly."
+                 "Resolve relative paths mentioned by the skill relative to the skill file's directory.%s")
+               "\n")
+              (plist-get skill :name)
+              (if (and arguments (not (string-empty-p arguments)))
+                  (format " with these arguments: %s" arguments)
+                "")
+              (plist-get skill :path)
+              (if (and arguments (not (string-empty-p arguments)))
+                  (format "\n\nArguments: %s" arguments)
+                ""))
+    (if (and arguments (not (string-empty-p arguments)))
+        (format "/%s %s" skill-name arguments)
+      (format "/%s" skill-name))))
 
 ;;;;; Batch TODO processing
 

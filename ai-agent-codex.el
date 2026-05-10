@@ -52,6 +52,13 @@ Searched in addition to the standard locations."
   :type '(repeat directory)
   :group 'ai-agent-codex)
 
+(defcustom ai-agent-codex-programmatic-skill-directories
+  (list (expand-file-name "~/.codex/programmatic-skills"))
+  "Directories to scan for skills run only by `ai-agent-run-skill'.
+These directories are not loaded by ordinary Codex sessions."
+  :type '(repeat directory)
+  :group 'ai-agent-codex)
+
 (defcustom ai-agent-codex-audit-skills
   '("/code-audit" "/design-audit" "/interpretability-audit")
   "Skills to run when performing a project audit."
@@ -269,7 +276,8 @@ The :type field is a string from the hook wrapper (e.g. \"Stop\")."
 (defun ai-agent-codex--discover-skills ()
   "Discover available Codex skills.
 Scans the standard Codex skill directories and any custom ones
-from `ai-agent-codex-skill-directories'."
+from `ai-agent-codex-skill-directories' and
+`ai-agent-codex-programmatic-skill-directories'."
   (let ((skills (make-hash-table :test #'equal))
         (dirs (append
                ;; Standard Codex skill locations
@@ -279,7 +287,8 @@ from `ai-agent-codex-skill-directories'."
                (when-let* ((proj (project-current)))
                  (list (expand-file-name ".agents/skills" (project-root proj))))
                ;; Custom
-               ai-agent-codex-skill-directories)))
+               ai-agent-codex-skill-directories
+               ai-agent-codex-programmatic-skill-directories)))
     (dolist (dir dirs)
       (when (file-directory-p dir)
         (dolist (file (file-expand-wildcards
