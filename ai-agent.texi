@@ -247,7 +247,7 @@ The Codex commands mirror the shared workflows for the Codex CLI@. @code{ai-agen
 
 @code{ai-agent-codex-audit-project} prompts for a project directory and runs each configured audit skill sequentially through @samp{codex exec}. @code{ai-agent-codex-debug-backtrace} saves the current Emacs backtrace, asks @samp{gptel} to identify likely packages, and starts a Codex session in the selected package source directory with instructions to fix the bug.
 
-@code{ai-agent-codex-handoff} reads @code{ai-agent-codex-handoff-file}, kills the current Codex buffer, and starts a new session with the handoff prompt. @code{ai-agent-codex-restart} resumes the current project with @samp{codex resume --last} after killing the old session. @code{ai-agent-codex-resume} and @code{ai-agent-codex-fork} expose the Codex CLI's resume and fork subcommands from the unified menu.
+@code{ai-agent-codex-handoff} reads @code{ai-agent-codex-handoff-file}, kills the current Codex buffer, and starts a new session with the handoff prompt. @code{ai-agent-codex-handoff-from-emacsclient} accepts the source buffer name from an @samp{emacsclient} argument, so agent-authored handoff commands can close the requesting session even though Emacs evaluates the form outside that buffer. @code{ai-agent-codex-restart} resumes the current project with @samp{codex resume --last} after killing the old session. @code{ai-agent-codex-resume} and @code{ai-agent-codex-fork} expose the Codex CLI's resume and fork subcommands from the unified menu.
 
 @node Functions
 @chapter Functions

@@ -629,7 +629,7 @@ via `codex exec'."
 ;;;;; Handoff
 
 ;;;###autoload
-(defun ai-agent-codex-handoff ()
+(defun ai-agent-codex-handoff (&optional buffer-name)
   "Close this Codex session and start a new one with the handoff prompt."
   (interactive)
   (unless (file-exists-p ai-agent-codex-handoff-file)
@@ -638,15 +638,42 @@ via `codex exec'."
   (let* ((prompt (with-temp-buffer
                    (insert-file-contents ai-agent-codex-handoff-file)
                    (string-trim (buffer-string))))
-         (dir (if (codex--buffer-p (current-buffer))
-                  default-directory
-                (codex--directory))))
+         (source-buffer (ai-agent-codex--handoff-source-buffer buffer-name))
+         (dir (ai-agent-codex--handoff-directory source-buffer)))
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty"))
-    (when (codex--buffer-p (current-buffer))
-      (ai-agent--force-kill-buffer (current-buffer)))
+    (when source-buffer
+      (ai-agent--force-kill-buffer source-buffer))
     (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
       (codex--start nil (list prompt) nil t))))
+
+(defun ai-agent-codex-handoff-from-emacsclient ()
+  "Run `ai-agent-codex-handoff' for the client-provided buffer name.
+The first value in `server-eval-args-left' is treated as the Codex
+buffer that requested the handoff."
+  (interactive)
+  (let ((buffer-name (car server-eval-args-left)))
+    (setq server-eval-args-left nil)
+    (ai-agent-codex-handoff buffer-name)))
+
+(defun ai-agent-codex--handoff-source-buffer (buffer-name)
+  "Return the Codex source buffer named BUFFER-NAME, or current buffer."
+  (cond
+   ((and buffer-name (not (string-empty-p buffer-name)))
+    (let ((buffer (get-buffer buffer-name)))
+      (unless buffer
+        (user-error "No Codex session buffer named `%s'" buffer-name))
+      (unless (codex--buffer-p buffer)
+        (user-error "Buffer `%s' is not a Codex session" buffer-name))
+      buffer))
+   ((codex--buffer-p (current-buffer))
+    (current-buffer))))
+
+(defun ai-agent-codex--handoff-directory (source-buffer)
+  "Return the project directory for SOURCE-BUFFER or fallback context."
+  (if source-buffer
+      (buffer-local-value 'default-directory source-buffer)
+    (codex--directory)))
 
 ;;;;; Restart
 

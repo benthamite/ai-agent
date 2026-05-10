@@ -2764,7 +2764,7 @@ there with the backtrace prompt passed as a CLI argument."
   :group 'ai-agent-claude)
 
 ;;;###autoload
-(defun ai-agent-claude-handoff ()
+(defun ai-agent-claude-handoff (&optional buffer-name)
   "Close this Claude session and start a new one with the handoff prompt.
 The `/handoff' skill must have been run first to write the handoff
 file.  The new session starts in the same project directory with
@@ -2774,12 +2774,23 @@ the handoff contents passed as a CLI argument."
     (user-error "No handoff file at %s — run /handoff first"
                 ai-agent-claude-handoff-file))
   (let* ((prompt (ai-agent-claude--read-handoff-file))
-         (dir (ai-agent-claude--handoff-directory)))
+         (source-buffer (ai-agent-claude--handoff-source-buffer buffer-name))
+         (dir (ai-agent-claude--handoff-directory source-buffer)))
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty — run /handoff first"))
-    (ai-agent-claude--kill-current-claude-buffer)
+    (when source-buffer
+      (ai-agent--force-kill-buffer source-buffer))
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))
       (claude-code--start nil (list prompt) nil t))))
+
+(defun ai-agent-claude-handoff-from-emacsclient ()
+  "Run `ai-agent-claude-handoff' for the client-provided buffer name.
+The first value in `server-eval-args-left' is treated as the
+Claude buffer that requested the handoff."
+  (interactive)
+  (let ((buffer-name (car server-eval-args-left)))
+    (setq server-eval-args-left nil)
+    (ai-agent-claude-handoff buffer-name)))
 
 (defun ai-agent-claude--read-handoff-file ()
   "Read and return the trimmed contents of the handoff file."
@@ -2787,18 +2798,24 @@ the handoff contents passed as a CLI argument."
     (insert-file-contents ai-agent-claude-handoff-file)
     (string-trim (buffer-string))))
 
-(defun ai-agent-claude--handoff-directory ()
-  "Return the project directory for the handoff session.
-Uses the current Claude buffer's directory if in one."
-  (if (claude-code--buffer-p (current-buffer))
-      default-directory
-    (claude-code--directory)))
+(defun ai-agent-claude--handoff-source-buffer (buffer-name)
+  "Return the Claude source buffer named BUFFER-NAME, or current buffer."
+  (cond
+   ((and buffer-name (not (string-empty-p buffer-name)))
+    (let ((buffer (get-buffer buffer-name)))
+      (unless buffer
+        (user-error "No Claude session buffer named `%s'" buffer-name))
+      (unless (claude-code--buffer-p buffer)
+        (user-error "Buffer `%s' is not a Claude session" buffer-name))
+      buffer))
+   ((claude-code--buffer-p (current-buffer))
+    (current-buffer))))
 
-(defun ai-agent-claude--kill-current-claude-buffer ()
-  "Kill the current buffer if it is a Claude session.
-Bypasses the kill-protection query."
-  (when (claude-code--buffer-p (current-buffer))
-    (ai-agent--force-kill-buffer (current-buffer))))
+(defun ai-agent-claude--handoff-directory (source-buffer)
+  "Return the project directory for SOURCE-BUFFER or fallback context."
+  (if source-buffer
+      (buffer-local-value 'default-directory source-buffer)
+    (claude-code--directory)))
 
 ;;;;; Restart
 
