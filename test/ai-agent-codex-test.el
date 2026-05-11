@@ -128,6 +128,25 @@
         (ai-agent-codex-restart)))
     (should (equal captured-account "work"))))
 
+(ert-deftest ai-agent-codex-test-send-command-and-return-are-separate ()
+  "Insert Codex command text separately from submitting it."
+  (let (events)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (cl-letf (((symbol-function 'codex--term-send-string)
+                   (lambda (_backend string)
+                     (push (list 'string string) events)))
+                  ((symbol-function 'codex--term-send-action)
+                   (lambda (_backend action &optional _payload)
+                     (push (list 'action action) events)))
+                  ((symbol-function 'display-buffer)
+                   (lambda (_buffer &optional _action _frame) nil)))
+          (ai-agent-codex-send-command "$session-learning-capture" buf)
+          (ai-agent-codex-send-return buf))))
+    (should (equal (nreverse events)
+                   '((string "$session-learning-capture")
+                     (action :return))))))
+
 ;;;; Theme sync
 
 (ert-deftest ai-agent-codex-test-sync-theme-updates-existing-tui-section ()

@@ -177,7 +177,8 @@ Source: SVG Repo (CC0).")
         :directory (lambda (buf) (with-current-buffer buf (codex--directory)))
         :extract-directory #'codex--extract-directory-from-buffer-name
         :extract-instance-name #'codex--extract-instance-name-from-buffer-name
-        :send-command (lambda (cmd &optional _buf) (codex--do-send-command cmd))
+        :send-command #'ai-agent-codex-send-command
+        :send-return #'ai-agent-codex-send-return
         :start #'codex--start
         :start-new #'ai-agent-codex--start-with-account
         :program "codex"
@@ -197,6 +198,28 @@ Source: SVG Repo (CC0).")
         :sync-theme #'ai-agent-codex--sync-theme))
 
 ;;;; Functions
+
+(defun ai-agent-codex-send-command (cmd &optional buffer)
+  "Insert CMD into BUFFER's Codex prompt without submitting it."
+  (when-let* ((codex-buffer (ai-agent-codex--target-buffer buffer)))
+    (with-current-buffer codex-buffer
+      (codex--term-send-string codex-terminal-backend cmd)
+      (display-buffer codex-buffer))
+    codex-buffer))
+
+(defun ai-agent-codex-send-return (&optional buffer)
+  "Submit the active prompt in BUFFER's Codex session."
+  (when-let* ((codex-buffer (ai-agent-codex--target-buffer buffer)))
+    (with-current-buffer codex-buffer
+      (codex--term-send-action codex-terminal-backend :return)
+      (display-buffer codex-buffer))
+    codex-buffer))
+
+(defun ai-agent-codex--target-buffer (buffer)
+  "Return BUFFER when live, otherwise prompt for a Codex buffer."
+  (if (buffer-live-p buffer)
+      buffer
+    (codex--get-or-prompt-for-buffer)))
 
 ;;;;; Account selection
 
