@@ -1086,13 +1086,44 @@ Emacs side to match Claude Code's behavior."
 
 ;;;;; Extend unified menu
 
-(with-eval-after-load 'ai-agent
+(defun ai-agent-codex--remove-menu-suffixes ()
+  "Remove Codex menu suffixes before appending them.
+`transient-append-suffix' mutates the prefix definition, so
+reloading this file can otherwise leave stale or duplicate
+entries in `ai-agent-menu'."
+  (dolist (command '(ai-agent-codex-resume
+                     ai-agent-codex-fork
+                     ai-agent-codex--infix-account))
+    (while (ignore-errors
+             (transient-get-suffix 'ai-agent-menu command)
+             t)
+      (transient-remove-suffix 'ai-agent-menu command))))
+
+(defun ai-agent-codex--account-menu-location ()
+  "Return the menu location after which to insert the Codex account infix."
+  (if (ignore-errors
+        (transient-get-suffix 'ai-agent-menu
+                              'ai-agent-claude--infix-account)
+        t)
+      'ai-agent-claude--infix-account
+    "-t"))
+
+(defun ai-agent-codex--append-menu-suffixes ()
+  "Append Codex suffixes to `ai-agent-menu' in a stable order."
+  (ai-agent-codex--remove-menu-suffixes)
   (transient-append-suffix 'ai-agent-menu "x"
     '("R" "codex resume" ai-agent-codex-resume))
   (transient-append-suffix 'ai-agent-menu "R"
     '("F" "codex fork" ai-agent-codex-fork))
-  (transient-append-suffix 'ai-agent-menu "-t"
+  (transient-append-suffix 'ai-agent-menu
+    (ai-agent-codex--account-menu-location)
     '("-C" ai-agent-codex--infix-account)))
+
+(with-eval-after-load 'ai-agent
+  (ai-agent-codex--append-menu-suffixes))
+
+(with-eval-after-load 'ai-agent-claude
+  (ai-agent-codex--append-menu-suffixes))
 
 ;;;; Provide
 
