@@ -91,13 +91,6 @@ On HTTP 429 responses the interval doubles, up to
   :type 'integer
   :group 'ai-agent-claude)
 
-(defcustom ai-agent-claude-copilot-enabled nil
-  "When non-nil, enable `copilot-mode' in Claude Code buffers.
-Copilot's ghost-text prose completions are shown while typing
-prompts and accepted text is sent to the terminal correctly."
-  :type 'boolean
-  :group 'ai-agent-claude)
-
 (defcustom ai-agent-claude-accounts nil
   "Alist of account names to `CLAUDE_CONFIG_DIR' paths.
 Each entry is (NAME . CONFIG-DIR).  When non-nil,
@@ -208,12 +201,6 @@ Used to detect when `/branch' creates a new session.")
 (defvar ai-agent-claude--usage-current-interval nil
   "Current polling interval in seconds, possibly increased by backoff.")
 
-(defvar-local ai-agent-claude--copilot-active nil
-  "Non-nil when Copilot integration is active in the current buffer.")
-
-(defvar-local ai-agent-claude--copilot-change-timer nil
-  "Debounce timer for triggering Copilot after eat buffer changes.")
-
 (defvar eat-terminal)
 (defvar url-http-end-of-headers)
 (defvar url-request-method)
@@ -233,28 +220,6 @@ Used to detect when `/branch' creates a new session.")
 (declare-function eat-self-input "eat" (n &optional e))
 (declare-function eat-term-display-cursor "eat" (terminal))
 (declare-function eat-term-send-string "eat" (terminal string))
-
-(defvar copilot-mode)
-(defvar copilot--overlay)
-(defvar copilot--connection)
-(defvar copilot--doc-version)
-(defvar copilot--track-changes-id)
-(defvar copilot-disable-predicates)
-(declare-function copilot-mode "copilot")
-(declare-function copilot-accept-completion "copilot")
-(declare-function copilot-complete "copilot")
-(declare-function copilot-clear-overlay "copilot")
-(declare-function copilot--overlay-visible "copilot")
-(declare-function copilot--get-language-id "copilot")
-(declare-function copilot--get-uri "copilot")
-(declare-function copilot--get-source "copilot")
-(declare-function copilot--connection-alivep "copilot")
-(declare-function copilot--post-command "copilot")
-(declare-function copilot--show-completion "copilot")
-(declare-function copilot--set-overlay-text "copilot")
-(declare-function track-changes-unregister "track-changes")
-(declare-function jsonrpc-notify "jsonrpc")
-(declare-function jsonrpc-async-request "jsonrpc")
 
 ;;;; Backend registration
 
@@ -1318,269 +1283,6 @@ other code paths (e.g. `agent-log-resume-session') also get an account."
 (defun ai-agent-claude-buffer-account ()
   "Return the account name for the current buffer, or nil."
   ai-agent-claude--buffer-account)
-
-;;;;; Copilot integration
-
-(defun ai-agent-claude-setup-copilot ()
-  "Set up Copilot integration in the current Claude Code buffer.
-Guards on `ai-agent-claude-copilot-enabled',
-`claude-code--buffer-p', `eat-terminal', and the availability of
-the `copilot' package."
-  (when (and ai-agent-claude-copilot-enabled
-             (claude-code--buffer-p (current-buffer))
-             (bound-and-true-p eat-terminal)
-             (require 'copilot nil t))
-    (advice-add 'copilot--get-language-id :around
-                #'ai-agent-claude--copilot-language-id)
-    ;; The copilot server ignores virtual buffer URIs.  Setting
-    ;; buffer-file-name makes copilot--get-uri return a file URI
-    ;; natively, so didOpen uses the same URI as inlineCompletion.
-    (setq buffer-file-name
-          (expand-file-name
-           (concat "claude-code-"
-                   (ai-agent-claude--sanitize-buffer-name)
-                   ".txt")
-           temporary-file-directory))
-    (setq buffer-auto-save-file-name nil)
-    (setq-local copilot-disable-predicates
-                (cons (lambda () buffer-read-only)
-                      copilot-disable-predicates))
-    (advice-add 'copilot-accept-completion :around
-                #'ai-agent-claude--copilot-accept-around)
-    (advice-add 'copilot--show-completion :around
-                #'ai-agent-claude--copilot-show-completion)
-    (advice-add 'copilot--set-overlay-text :around
-                #'ai-agent-claude--copilot-set-overlay-text)
-    (add-hook 'post-command-hook
-              #'ai-agent-claude--copilot-post-command nil t)
-    ;; Eat's semi-char-mode keymap binds TAB to `eat-self-input'.
-    ;; Since it is a minor-mode keymap, it takes priority over
-    ;; copilot's keymap overlay (which also requires point to be
-    ;; within its range).  Use a minor mode activated after eat to
-    ;; get higher priority in `minor-mode-map-alist'.
-    (ai-agent-claude--copilot-keys-mode 1)
-    (setq ai-agent-claude--copilot-active t)
-    (copilot-mode 1)
-    ;; Copilot registers a `track-changes' handler when the mode
-    ;; enables, but eat's `inhibit-modification-hooks' prevents
-    ;; track-changes from working and causes "Recovering from
-    ;; confusing calls to before/after-change-functions" errors.
-    ;; Unregister it since we do our own full-document sync.
-    (when (bound-and-true-p copilot--track-changes-id)
-      (track-changes-unregister copilot--track-changes-id)
-      (setq copilot--track-changes-id nil))
-    ;; Copilot's own `post-command-hook' handler calls
-    ;; `copilot-complete' without syncing the document, which would
-    ;; use stale content.  Remove it and rely on our handler that
-    ;; syncs before requesting completions.
-    (remove-hook 'post-command-hook #'copilot--post-command t)))
-
-(defvar ai-agent-claude--copilot-keys-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "TAB") #'ai-agent-claude--copilot-tab)
-    (define-key map [tab] #'ai-agent-claude--copilot-tab)
-    map)
-  "Keymap for `ai-agent-claude--copilot-keys-mode'.")
-
-(define-minor-mode ai-agent-claude--copilot-keys-mode
-  "Minor mode providing Copilot keybindings in Claude Code buffers."
-  :keymap ai-agent-claude--copilot-keys-mode-map)
-
-(defun ai-agent-claude--copilot-tab ()
-  "Accept Copilot completion, try snippet expansion, or send TAB to eat."
-  (interactive)
-  (cond
-   ((copilot--overlay-visible)
-    (copilot-accept-completion))
-   ((ai-agent--try-expand-snippet-at-prompt)
-    nil)
-   (t
-    (eat-self-input 1 ?\t))))
-
-(defun ai-agent-claude--copilot-language-id (orig-fn)
-  "Return \"plaintext\" in Claude Code eat buffers.
-ORIG-FN is `copilot--get-language-id'.  The default language ID
-for `eat-mode' is \"eat\", which the Copilot server does not
-recognize."
-  (if ai-agent-claude--copilot-active
-      "plaintext"
-    (funcall orig-fn)))
-
-(defun ai-agent-claude--copilot-show-completion (orig-fn completion-data)
-  "Relocate the copilot overlay to the TUI prompt line.
-ORIG-FN is `copilot--show-completion'.  COMPLETION-DATA is the
-server response.  In eat buffers the line numbers in the server's
-range drift because the buffer changes between sync and response,
-so the overlay often ends up on a TUI chrome line.  This advice
-lets the original function create the overlay, then moves it to
-the prompt and re-renders the ghost text at the correct position.
-Finally it moves point there so the Emacs cursor sits at the
-ghost text boundary."
-  (if (not ai-agent-claude--copilot-active)
-      (funcall orig-fn completion-data)
-    (funcall orig-fn completion-data)
-    (when (copilot--overlay-visible)
-      (let ((prompt-bol
-             (save-excursion
-               (goto-char (point-max))
-               (when (re-search-backward "^❯[[:space:]]" nil t)
-                 (point)))))
-        (when prompt-bol
-          (let* ((prompt-eol (save-excursion (goto-char prompt-bol)
-                                             (line-end-position)))
-                 (line-text (buffer-substring-no-properties
-                             prompt-bol prompt-eol))
-                 (insert-text (plist-get completion-data :insertText))
-                 (prefix-len
-                  (when insert-text
-                    (let ((i 0)
-                          (max-i (min (length line-text)
-                                      (length insert-text))))
-                      (while (and (< i max-i)
-                                  (= (aref line-text i)
-                                     (aref insert-text i)))
-                        (cl-incf i))
-                      i)))
-                 (completion
-                  (when (and prefix-len
-                             (< prefix-len (length insert-text)))
-                    (substring insert-text prefix-len)))
-                 (insert-pos (+ prompt-bol (or prefix-len 0))))
-            (when (and completion (not (string-empty-p completion)))
-              (goto-char insert-pos)
-              (overlay-put copilot--overlay 'tail-length 0)
-              (copilot--set-overlay-text copilot--overlay completion)
-              (overlay-put copilot--overlay 'completion completion)
-              (overlay-put copilot--overlay 'completion-start insert-pos))))))))
-
-(defun ai-agent-claude--copilot-set-overlay-text (orig-fn ov completion)
-  "Clip the copilot overlay to the remaining terminal columns.
-ORIG-FN is `copilot--set-overlay-text'.  OV is the overlay.
-COMPLETION is the completion text.  In eat buffers, the overlay's
-`after-string' must not wrap past the line end, otherwise it
-pushes TUI chrome down and disrupts the terminal layout.  This
-advice truncates the completion to the first line and clips it to
-the remaining space on the current terminal line."
-  (if ai-agent-claude--copilot-active
-      (let* ((first-line (car (split-string completion "\n")))
-             (remaining (max 0 (- (window-width) (current-column) 1)))
-             (clipped (if (> (length first-line) remaining)
-                         (substring first-line 0 remaining)
-                       first-line)))
-        (unless (string-empty-p clipped)
-          (funcall orig-fn ov clipped)))
-    (funcall orig-fn ov completion)))
-
-(defun ai-agent-claude--copilot-accept-around (orig-fn &optional transform-fn)
-  "Around advice for `copilot-accept-completion' in eat buffers.
-When in a Claude Code eat buffer, extract the completion, send
-telemetry, and inject text via the terminal instead of using
-`delete-region'/`insert'.  Otherwise, call ORIG-FN with
-TRANSFORM-FN unchanged."
-  (if (and (bound-and-true-p eat-terminal)
-           ai-agent-claude--copilot-active)
-      (when (copilot--overlay-visible)
-        (let* ((completion (overlay-get copilot--overlay 'completion))
-               (command (overlay-get copilot--overlay 'command))
-               (full-insert-text (overlay-get copilot--overlay 'full-insert-text))
-               (t-completion (funcall (or transform-fn #'identity) completion))
-               (is-partial (and (string-prefix-p t-completion completion)
-                                (not (string-equal t-completion completion)))))
-          (ai-agent-claude--copilot-send-telemetry
-           is-partial command full-insert-text completion t-completion)
-          (copilot-clear-overlay t)
-          (let ((text (replace-regexp-in-string "\n" "\e\r" t-completion)))
-            (eat-term-send-string eat-terminal text))
-          t))
-    (funcall orig-fn transform-fn)))
-
-(defun ai-agent-claude--copilot-send-telemetry
-    (is-partial command full-insert-text completion t-completion)
-  "Send Copilot telemetry for acceptance.
-IS-PARTIAL is non-nil for partial acceptance.  COMMAND is the LSP
-command from the overlay.  FULL-INSERT-TEXT is the original full
-suggestion.  COMPLETION is the remaining completion text.
-T-COMPLETION is the transformed (accepted) portion."
-  (when (and command (bound-and-true-p copilot--connection))
-    (condition-case nil
-        (if is-partial
-            (let* ((prefix-len (- (length full-insert-text) (length completion)))
-                   (accepted-length (+ prefix-len (length t-completion))))
-              (jsonrpc-notify copilot--connection
-                              'textDocument/didPartiallyAcceptCompletion
-                              (list :item (list :command command)
-                                    :acceptedLength accepted-length)))
-          (jsonrpc-async-request copilot--connection
-                                 'workspace/executeCommand command
-                                 :success-fn #'ignore))
-      (error nil))))
-
-(defun ai-agent-claude--copilot-sync-document ()
-  "Send a full-document `textDocument/didChange' to the Copilot server.
-Eat's process filter runs with `inhibit-modification-hooks' bound
-to t, so `track-changes' never detects buffer modifications and
-the server's document becomes stale.  This function works around
-the problem by sending the entire buffer contents as a single
-replacement change, keeping the server in sync."
-  (when (and (bound-and-true-p copilot--connection)
-             (copilot--connection-alivep))
-    (cl-incf copilot--doc-version)
-    (jsonrpc-notify
-     copilot--connection
-     'textDocument/didChange
-     (list :textDocument (list :uri (copilot--get-uri)
-                               :version copilot--doc-version)
-           :contentChanges
-           (vector (list :text (copilot--get-source)))))))
-
-(defun ai-agent-claude--copilot-post-command ()
-  "Schedule a debounced `copilot-complete' after user input.
-Eat's process filter runs with `inhibit-modification-hooks' bound
-to t, so neither `after-change-functions' nor `track-changes'
-detect buffer modifications (making copilot's normal
-`post-command-hook' trigger ineffective).  This function replaces
-copilot's trigger by scheduling a document sync and completion
-request after a short delay, giving the terminal echo time to
-arrive and update the buffer before the Copilot server is
-consulted."
-  (when (and ai-agent-claude--copilot-active
-             (bound-and-true-p copilot-mode)
-             (not buffer-read-only))
-    (copilot-clear-overlay)
-    (when (timerp ai-agent-claude--copilot-change-timer)
-      (cancel-timer ai-agent-claude--copilot-change-timer))
-    (let ((buf (current-buffer)))
-      (setq ai-agent-claude--copilot-change-timer
-            (run-with-timer
-             0.3 nil
-             (lambda ()
-               (when (buffer-live-p buf)
-                 (with-current-buffer buf
-                   (setq ai-agent-claude--copilot-change-timer nil)
-                   (when copilot-mode
-                     (ai-agent-claude--copilot-complete-at-prompt))))))))))
-
-(defun ai-agent-claude--copilot-complete-at-prompt ()
-  "Sync the document and request completion at the TUI prompt.
-Claude Code's TUI repositions the terminal cursor for rendering,
-so `point' often lands on a status-bar or border line rather than
-the input prompt.  This function searches backward for the `❯'
-prompt marker and moves point to the end of the user's text on
-that line before syncing and requesting completions."
-  (save-excursion
-    (goto-char (point-max))
-    (when (re-search-backward "^❯[[:space:]]" nil t)
-      (end-of-line)
-      (skip-chars-backward " \t")
-      (ai-agent-claude--copilot-sync-document)
-      (copilot-complete))))
-
-(defun ai-agent-claude-teardown-copilot ()
-  "Clean up Copilot integration in the current Claude Code buffer."
-  (when ai-agent-claude--copilot-active
-    (when (timerp ai-agent-claude--copilot-change-timer)
-      (cancel-timer ai-agent-claude--copilot-change-timer))
-    (setq ai-agent-claude--copilot-active nil)))
 
 ;;;;; Non-interactive execution
 
@@ -2743,11 +2445,9 @@ there with the backtrace prompt passed as a CLI argument."
 (add-hook 'claude-code-start-hook #'ai-agent-disable-scrollback-truncation)
 (add-hook 'claude-code-start-hook #'ai-agent-setup-snippet-keys)
 (add-hook 'claude-code-start-hook #'ai-agent--assign-session-key)
-(add-hook 'claude-code-start-hook #'ai-agent-claude-setup-copilot)
 (add-hook 'claude-code-process-environment-functions
           #'ai-agent-claude--sync-theme-before-start)
 (add-hook 'kill-buffer-hook #'ai-agent--release-session-key)
-(add-hook 'kill-buffer-hook #'ai-agent-claude-teardown-copilot)
 (advice-add 'claude-code--eat-send-return :before
             #'ai-agent--clear-waiting-for-input)
 (advice-add 'claude-code--vterm-send-return :before
@@ -3243,12 +2943,6 @@ Signals an error if the status file is missing or incomplete."
 
 ;;;; Extend unified menu
 
-(transient-define-infix ai-agent-claude--infix-copilot-enabled ()
-  "Toggle `ai-agent-claude-copilot-enabled'."
-  :class 'ai-agent--boolean-variable
-  :variable 'ai-agent-claude-copilot-enabled
-  :description "copilot")
-
 (transient-define-infix ai-agent-claude--infix-warn-kill-with-branches ()
   "Toggle `ai-agent-claude-warn-kill-with-branches'."
   :class 'ai-agent--boolean-variable
@@ -3290,7 +2984,26 @@ Signals an error if the status file is missing or incomplete."
     (user-error "Package `agent-log' is required for log browsing"))
   (call-interactively #'agent-log-menu))
 
-(with-eval-after-load 'ai-agent
+(defun ai-agent-claude--remove-menu-suffixes ()
+  "Remove Claude menu suffixes before appending them."
+  (dolist (command '(ai-agent-claude-switch-branch
+                     ai-agent-claude-create-branch
+                     ai-agent-claude-batch-todos
+                     ai-agent-claude-send-todo-at-point
+                     ai-agent-claude-agent-log-menu
+                     ai-agent-claude-start-status-polling
+                     ai-agent-claude-stop-status-polling
+                     ai-agent-claude--infix-account
+                     "-c"
+                     ai-agent-claude--infix-warn-kill-with-branches))
+    (while (ignore-errors
+             (transient-get-suffix 'ai-agent-menu command)
+             t)
+      (transient-remove-suffix 'ai-agent-menu command))))
+
+(defun ai-agent-claude--append-menu-suffixes ()
+  "Append Claude suffixes to `ai-agent-menu' in a stable order."
+  (ai-agent-claude--remove-menu-suffixes)
   ;; Sessions: after "exit session"
   (transient-append-suffix 'ai-agent-menu "x"
     '("B" "switch branch" ai-agent-claude-switch-branch))
@@ -3311,10 +3024,11 @@ Signals an error if the status file is missing or incomplete."
   ;; Options: after "protect buffers"
   (transient-append-suffix 'ai-agent-menu "-p"
     '("-a" ai-agent-claude--infix-account))
-  (transient-append-suffix 'ai-agent-menu "-t"
-    '("-c" ai-agent-claude--infix-copilot-enabled))
-  (transient-append-suffix 'ai-agent-menu "-c"
+  (transient-append-suffix 'ai-agent-menu "-a"
     '("-w" ai-agent-claude--infix-warn-kill-with-branches)))
+
+(with-eval-after-load 'ai-agent
+  (ai-agent-claude--append-menu-suffixes))
 
 (provide 'ai-agent-claude)
 ;;; ai-agent-claude.el ends here

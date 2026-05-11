@@ -23,7 +23,7 @@ The package is split into a small core and backend modules. The core file, =ai-a
 
 The main workflow is to load =ai-agent.el=, then require the backend modules you use. Once the Claude and Codex modules are loaded, =M-x ai-agent-menu= and =M-x ai-agent-start-or-switch= operate across both tools. Sessions are grouped by account when the backend exposes account metadata, highlighted when waiting for input, and disambiguated by project and instance name when several sessions share a directory.
 
-The package depends on =transient= for menus and =consult= for completion. The Claude backend expects =claude-code.el=. The Codex backend expects =codex.el=. Optional integrations use packages such as =yasnippet=, =doom-modeline=, =copilot=, =gptel=, =agent-log=, and =monet= when those are available.
+The package depends on =transient= for menus and =consult= for completion. The Claude backend expects =claude-code.el=. The Codex backend expects =codex.el=. Optional integrations use packages such as =yasnippet=, =doom-modeline=, =gptel=, =agent-log=, and =monet= when those are available.
 
 * User options
 :PROPERTIES:
@@ -66,7 +66,6 @@ Snippet helpers use =yasnippet= and =consult-yasnippet= only when those optional
 #+vindex: ai-agent-claude-status-interval
 #+vindex: ai-agent-claude-usage-interval
 #+vindex: ai-agent-claude-usage-max-interval
-#+vindex: ai-agent-claude-copilot-enabled
 #+vindex: ai-agent-claude-accounts
 #+vindex: ai-agent-claude-account-file
 #+vindex: ai-agent-claude-settings-file
@@ -266,7 +265,7 @@ The Claude and Codex status helpers are intended for modeline integrations such 
 :END:
 
 #+findex: ai-agent-menu
-Backend modules extend ~ai-agent-menu~ through ~transient-append-suffix~ after the core menu is available. The base menu contains shared session, tool, alert, buffer, and option entries. The Claude module appends branch navigation, batch TODOs, TODO sending, log browsing, status polling, Claude account selection, Copilot toggling, and branch-kill warnings. The Codex module appends Codex resume/fork commands and Codex account selection, removing any existing Codex suffixes first so reloading the backend does not duplicate or stale-position those entries.
+Backend modules extend ~ai-agent-menu~ through ~transient-append-suffix~ after the core menu is available, first removing their own existing suffixes so reloading does not duplicate or stale-position those entries. The base menu contains shared session, tool, alert, buffer, and option entries. The Claude module appends branch navigation, batch TODOs, TODO sending, log browsing, status polling, Claude account selection, and branch-kill warnings. The Codex module appends Codex resume/fork commands and Codex account selection.
 
 Boolean menu infixes use a shared transient class that toggles the bound variable each time it is invoked. The theme-sync infix additionally calls ~ai-agent-sync-theme-now~ when enabling theme sync, so backend configuration files are updated immediately.
 
