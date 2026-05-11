@@ -3281,7 +3281,7 @@ Signals an error if the status file is missing or incomplete."
   "Select the active Claude account."
   :class 'ai-agent-claude--account-variable
   :variable 'ai-agent-claude--current-account
-  :description "account")
+  :description "claude account")
 
 (defun ai-agent-claude-agent-log-menu ()
   "Open the optional `agent-log' menu."
