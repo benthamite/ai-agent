@@ -1,11 +1,11 @@
-;;; ai-agent-codex.el --- Extensions for codex -*- lexical-binding: t -*-
+;;; agents-codex.el --- Extensions for codex -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026
 
 ;; Author: Pablo Stafforini
-;; URL: https://github.com/benthamite/ai-agent
+;; URL: https://github.com/benthamite/agents
 ;; Version: 0.1
-;; Package-Requires: ((codex "0.1") (ai-agent "0.1"))
+;; Package-Requires: ((codex "0.1") (agents "0.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -29,129 +29,129 @@
 ;;; Code:
 
 (require 'codex)
-(eval-and-compile (require 'ai-agent))
+(eval-and-compile (require 'agents))
 (require 'cl-lib)
 (require 'subr-x)
 (require 'transient)
 
 ;;;; Variables
 
-(defgroup ai-agent-codex ()
+(defgroup agents-codex ()
   "Extensions for `codex'."
   :group 'codex)
 
-(defcustom ai-agent-codex-handoff-file
+(defcustom agents-codex-handoff-file
   (expand-file-name "codex-handoff.md" temporary-file-directory)
   "Path to the handoff file written by the handoff skill."
   :type 'file
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-accounts nil
+(defcustom agents-codex-accounts nil
   "Alist of account names to Codex home directories.
 Each entry is (NAME . CODEX-HOME).  When non-nil,
-`ai-agent-codex-start-or-switch' uses the persisted account
+`agents-codex-start-or-switch' uses the persisted account
 selection and sets `CODEX_HOME' accordingly so each account
 maintains its own credentials while sharing the standard Codex
 configuration, hooks, skills, sessions, and history from
 `~/.codex/'.
 
-Use `ai-agent-codex-select-account' to change the active account.
-The selection persists in `ai-agent-codex-account-file'.
+Use `agents-codex-select-account' to change the active account.
+The selection persists in `agents-codex-account-file'.
 
 Example:
   \\='((\"personal\" . \"~/.codex-personal\")
     (\"work\"     . \"~/.codex-work\"))"
   :type '(alist :key-type string :value-type directory)
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-account-file
+(defcustom agents-codex-account-file
   (expand-file-name ".codex-current-account" "~")
   "File storing the name of the currently active Codex account.
-The file contains a single account name from `ai-agent-codex-accounts'.
-Written by `ai-agent-codex-select-account', read at session start."
+The file contains a single account name from `agents-codex-accounts'.
+Written by `agents-codex-select-account', read at session start."
   :type 'file
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-skill-directories nil
+(defcustom agents-codex-skill-directories nil
   "Additional directories to scan for Codex skills.
 Searched in addition to the standard locations."
   :type '(repeat directory)
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-programmatic-skill-directories
+(defcustom agents-codex-programmatic-skill-directories
   (list (expand-file-name "~/.codex/programmatic-skills"))
-  "Directories to scan for skills run only by `ai-agent-run-skill'.
+  "Directories to scan for skills run only by `agents-run-skill'.
 These directories are not loaded by ordinary Codex sessions."
   :type '(repeat directory)
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-audit-skills
+(defcustom agents-codex-audit-skills
   '("/code-audit" "/design-audit" "/interpretability-audit")
   "Skills to run when performing a project audit."
   :type '(repeat string)
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-audit-project-directories nil
-  "Directories available for selection in `ai-agent-codex-audit-project'."
+(defcustom agents-codex-audit-project-directories nil
+  "Directories available for selection in `agents-codex-audit-project'."
   :type '(repeat directory)
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-exec-approval-policy 'never
+(defcustom agents-codex-exec-approval-policy 'never
   "Approval policy used for non-interactive `codex exec' runs.
 When nil, use `codex-approval-policy' or the CLI default."
   :type '(choice (const :tag "Codex default" nil)
                  (const :tag "Untrusted" untrusted)
                  (const :tag "On request" on-request)
                  (const :tag "Never" never))
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-exec-sandbox-mode nil
+(defcustom agents-codex-exec-sandbox-mode nil
   "Sandbox mode used for non-interactive `codex exec' runs.
 When nil, use `codex-sandbox-mode' or the CLI default."
   :type '(choice (const :tag "Codex default" nil)
                  (const :tag "Read-only" read-only)
                  (const :tag "Workspace write" workspace-write)
                  (const :tag "Full access" danger-full-access))
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-exec-skip-git-repo-check t
+(defcustom agents-codex-exec-skip-git-repo-check t
   "When non-nil, pass `--skip-git-repo-check' to `codex exec'."
   :type 'boolean
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-debug-backtrace-model 'gemini-flash-lite-latest
+(defcustom agents-codex-debug-backtrace-model 'gemini-flash-lite-latest
   "GPtel model for identifying candidate packages from a backtrace."
   :type 'symbol
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
-(defcustom ai-agent-codex-debug-backtrace-backend "Gemini"
+(defcustom agents-codex-debug-backtrace-backend "Gemini"
   "GPtel backend name for backtrace analysis."
   :type 'string
-  :group 'ai-agent-codex)
+  :group 'agents-codex)
 
 (defvar gptel-backend)
 (defvar gptel-model)
 (defvar gptel-use-tools)
 (defvar gptel--known-backends)
-(declare-function ai-agent-svg-icon "ai-agent" (svg-data &optional face))
+(declare-function agents-svg-icon "agents" (svg-data &optional face))
 (declare-function gptel-request "gptel")
 
-(defvar ai-agent-codex--current-account nil
+(defvar agents-codex--current-account nil
   "Currently active Codex account name.
-Loaded from `ai-agent-codex-account-file' on first use;
-changed by `ai-agent-codex-select-account'.")
+Loaded from `agents-codex-account-file' on first use;
+changed by `agents-codex-select-account'.")
 
-(defvar ai-agent-codex--pending-account nil
+(defvar agents-codex--pending-account nil
   "Account name for the current `codex' invocation.
-Dynamically bound by `ai-agent-codex--start-with-account';
-read by `ai-agent-codex-account-env'.")
+Dynamically bound by `agents-codex--start-with-account';
+read by `agents-codex-account-env'.")
 
-(defvar-local ai-agent-codex--buffer-account nil
+(defvar-local agents-codex--buffer-account nil
   "Account name that was active when this buffer's session started.
-Set by `ai-agent-codex--capture-buffer-account' via
+Set by `agents-codex--capture-buffer-account' via
 `codex-start-hook'.")
 
-(defconst ai-agent-codex--shared-config-items
+(defconst agents-codex--shared-config-items
   '("config.toml" "hooks.json" "AGENTS.md" "rules"
     "skills" "programmatic-skills" "plugins" "vendor_imports"
     "history.jsonl" "sessions" "session_index.jsonl"
@@ -165,57 +165,57 @@ Only account credentials such as `auth.json' remain account-local.")
 
 ;;;; Backend registration
 
-(defconst ai-agent-codex-icon-svg
+(defconst agents-codex-icon-svg
   "<svg fill=\"currentColor\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z\"/></svg>"
   "SVG path data for the OpenAI logo (knot icon).
 Source: SVG Repo (CC0).")
 
-(ai-agent-register-backend 'codex
+(agents-register-backend 'codex
   (list :buffer-p #'codex--buffer-p
         :find-all-buffers #'codex--find-all-codex-buffers
         :find-buffers-for-dir #'codex--find-codex-buffers-for-directory
         :directory (lambda (buf) (with-current-buffer buf (codex--directory)))
         :extract-directory #'codex--extract-directory-from-buffer-name
         :extract-instance-name #'codex--extract-instance-name-from-buffer-name
-        :send-command #'ai-agent-codex-send-command
-        :send-return #'ai-agent-codex-send-return
+        :send-command #'agents-codex-send-command
+        :send-return #'agents-codex-send-return
         :start #'codex--start
-        :start-new #'ai-agent-codex--start-with-account
+        :start-new #'agents-codex--start-with-account
         :program "codex"
-        :icon (lambda (&optional face) (let ((svg (ai-agent-svg-icon ai-agent-codex-icon-svg face)))
+        :icon (lambda (&optional face) (let ((svg (agents-svg-icon agents-codex-icon-svg face)))
                                         (if (string-empty-p svg) "CX" svg)))
         :account (lambda (buf)
-                   (buffer-local-value 'ai-agent-codex--buffer-account buf))
+                   (buffer-local-value 'agents-codex--buffer-account buf))
         :label "Codex"
-        :discover-skills #'ai-agent-codex--discover-skills
-        :handoff #'ai-agent-codex-handoff
-        :run-skill #'ai-agent-codex-run-skill
-        :audit-project #'ai-agent-codex-audit-project
-        :debug-backtrace #'ai-agent-codex-debug-backtrace
-        :setup-kill-on-exit #'ai-agent-codex-setup-kill-on-exit
-        :exit #'ai-agent-codex-exit
-        :restart #'ai-agent-codex-restart
-        :sync-theme #'ai-agent-codex--sync-theme))
+        :discover-skills #'agents-codex--discover-skills
+        :handoff #'agents-codex-handoff
+        :run-skill #'agents-codex-run-skill
+        :audit-project #'agents-codex-audit-project
+        :debug-backtrace #'agents-codex-debug-backtrace
+        :setup-kill-on-exit #'agents-codex-setup-kill-on-exit
+        :exit #'agents-codex-exit
+        :restart #'agents-codex-restart
+        :sync-theme #'agents-codex--sync-theme))
 
 ;;;; Functions
 
-(defun ai-agent-codex-send-command (cmd &optional buffer)
+(defun agents-codex-send-command (cmd &optional buffer)
   "Insert CMD into BUFFER's Codex prompt without submitting it."
-  (when-let* ((codex-buffer (ai-agent-codex--target-buffer buffer)))
+  (when-let* ((codex-buffer (agents-codex--target-buffer buffer)))
     (with-current-buffer codex-buffer
       (codex--term-send-string codex-terminal-backend cmd)
       (display-buffer codex-buffer))
     codex-buffer))
 
-(defun ai-agent-codex-send-return (&optional buffer)
+(defun agents-codex-send-return (&optional buffer)
   "Submit the active prompt in BUFFER's Codex session."
-  (when-let* ((codex-buffer (ai-agent-codex--target-buffer buffer)))
+  (when-let* ((codex-buffer (agents-codex--target-buffer buffer)))
     (with-current-buffer codex-buffer
       (codex--term-send-action codex-terminal-backend :return)
       (display-buffer codex-buffer))
     codex-buffer))
 
-(defun ai-agent-codex--target-buffer (buffer)
+(defun agents-codex--target-buffer (buffer)
   "Return BUFFER when live, otherwise prompt for a Codex buffer."
   (if (buffer-live-p buffer)
       buffer
@@ -223,49 +223,49 @@ Source: SVG Repo (CC0).")
 
 ;;;;; Account selection
 
-(defun ai-agent-codex-account-env (_buffer-name _dir)
+(defun agents-codex-account-env (_buffer-name _dir)
   "Return environment variables for the session being started.
-Sets `CODEX_HOME' based on `ai-agent-codex-accounts'.  Prefers
-the dynamically bound `ai-agent-codex--pending-account' and falls
+Sets `CODEX_HOME' based on `agents-codex-accounts'.  Prefers
+the dynamically bound `agents-codex--pending-account' and falls
 back to the persisted active account via
-`ai-agent-codex--resolve-account', so callers that invoke
+`agents-codex--resolve-account', so callers that invoke
 `codex--start' directly still get the right account."
-  (when-let* ((account (or ai-agent-codex--pending-account
-                           (ai-agent-codex--resolve-account)))
-              (home (ai-agent-codex--account-home account)))
-    (ai-agent-codex--sync-account-home account)
+  (when-let* ((account (or agents-codex--pending-account
+                           (agents-codex--resolve-account)))
+              (home (agents-codex--account-home account)))
+    (agents-codex--sync-account-home account)
     (list (format "CODEX_HOME=%s" home))))
 
-(defun ai-agent-codex--account-home (account)
+(defun agents-codex--account-home (account)
   "Return the expanded Codex home directory for ACCOUNT, or nil."
-  (when-let* ((home (alist-get account ai-agent-codex-accounts
+  (when-let* ((home (alist-get account agents-codex-accounts
                                nil nil #'string=)))
     (expand-file-name home)))
 
-(defun ai-agent-codex--config-file (&optional account)
+(defun agents-codex--config-file (&optional account)
   "Return the config.toml path for ACCOUNT or the default Codex config."
-  (if-let* ((home (and account (ai-agent-codex--account-home account))))
+  (if-let* ((home (and account (agents-codex--account-home account))))
       (expand-file-name "config.toml" home)
     (expand-file-name codex-hooks-config-path)))
 
-(defun ai-agent-codex--sync-account-home (account)
+(defun agents-codex--sync-account-home (account)
   "Sync shared Codex state into ACCOUNT's home directory."
-  (when-let* ((home (ai-agent-codex--account-home account)))
+  (when-let* ((home (agents-codex--account-home account)))
     (make-directory home t)
     (condition-case err
-        (ai-agent-codex--ensure-shared-symlinks home)
+        (agents-codex--ensure-shared-symlinks home)
       (error
-       (message "ai-agent-codex: failed to sync account home: %S" err)))))
+       (message "agents-codex: failed to sync account home: %S" err)))))
 
-(defun ai-agent-codex--ensure-shared-symlinks (home)
+(defun agents-codex--ensure-shared-symlinks (home)
   "Ensure shared config symlinks exist in account HOME."
   (let ((canonical-home (expand-file-name ".codex/" "~")))
-    (dolist (item ai-agent-codex--shared-config-items)
-      (ai-agent-codex--ensure-shared-symlink
+    (dolist (item agents-codex--shared-config-items)
+      (agents-codex--ensure-shared-symlink
        (expand-file-name item canonical-home)
        (expand-file-name item home)))))
 
-(defun ai-agent-codex--ensure-shared-symlink (source target)
+(defun agents-codex--ensure-shared-symlink (source target)
   "Ensure TARGET is a symlink pointing to SOURCE.
 Create the symlink if TARGET is missing, replace TARGET if it is a
 virgin-state file or empty directory, and back up TARGET before
@@ -274,25 +274,25 @@ replacing it if it has real content."
     (cond
      ((file-symlink-p target)
       (unless (equal (file-truename target) (file-truename source))
-        (ai-agent-codex--backup-item target)
+        (agents-codex--backup-item target)
         (make-symbolic-link source target)
-        (message "ai-agent-codex: replaced %s with symlink to %s"
+        (message "agents-codex: replaced %s with symlink to %s"
                  target source)))
      ((not (file-exists-p target))
       (make-symbolic-link source target)
-      (message "ai-agent-codex: symlinked %s -> %s" target source))
-     ((ai-agent-codex--item-virgin-p target)
-      (ai-agent-codex--delete-item target)
+      (message "agents-codex: symlinked %s -> %s" target source))
+     ((agents-codex--item-virgin-p target)
+      (agents-codex--delete-item target)
       (make-symbolic-link source target)
-      (message "ai-agent-codex: replaced virgin %s with symlink to %s"
+      (message "agents-codex: replaced virgin %s with symlink to %s"
                target source))
      (t
-      (ai-agent-codex--backup-item target)
+      (agents-codex--backup-item target)
       (make-symbolic-link source target)
-      (message "ai-agent-codex: backed up and symlinked %s -> %s"
+      (message "agents-codex: backed up and symlinked %s -> %s"
                target source)))))
 
-(defun ai-agent-codex--item-virgin-p (path)
+(defun agents-codex--item-virgin-p (path)
   "Return non-nil if PATH is a virgin-state file or empty directory.
 An empty directory is virgin.  A zero-byte file is virgin.  A small
 JSON file containing only `{}' or `[]' is virgin."
@@ -300,9 +300,9 @@ JSON file containing only `{}' or `[]' is virgin."
    ((file-directory-p path)
     (null (directory-files path nil directory-files-no-dot-files-regexp)))
    ((file-regular-p path)
-    (ai-agent-codex--file-virgin-p path))))
+    (agents-codex--file-virgin-p path))))
 
-(defun ai-agent-codex--file-virgin-p (path)
+(defun agents-codex--file-virgin-p (path)
   "Return non-nil if regular file PATH has empty or placeholder content."
   (let ((size (file-attribute-size (file-attributes path))))
     (or (zerop size)
@@ -313,105 +313,105 @@ JSON file containing only `{}' or `[]' is virgin."
                         (buffer-string)))
                      '("" "{}" "[]"))))))
 
-(defun ai-agent-codex--delete-item (path)
+(defun agents-codex--delete-item (path)
   "Delete PATH, whether it is a file or a directory."
   (if (file-directory-p path)
       (delete-directory path t)
     (delete-file path)))
 
-(defun ai-agent-codex--backup-item (path)
+(defun agents-codex--backup-item (path)
   "Move PATH to a timestamped backup path."
   (let* ((timestamp (format-time-string "%Y%m%d%H%M%S"))
-         (backup (format "%s.ai-agent-backup-%s" path timestamp))
+         (backup (format "%s.agents-backup-%s" path timestamp))
          (candidate backup)
          (counter 0))
     (while (file-exists-p candidate)
       (setq counter (1+ counter)
             candidate (format "%s.%d" backup counter)))
     (rename-file path candidate)
-    (message "ai-agent-codex: backed up %s to %s" path candidate)))
+    (message "agents-codex: backed up %s to %s" path candidate)))
 
-(defun ai-agent-codex--load-account ()
-  "Load the current account from `ai-agent-codex-account-file'.
+(defun agents-codex--load-account ()
+  "Load the current account from `agents-codex-account-file'.
 Return the account name, or nil if the file is missing or stale."
-  (when (file-exists-p ai-agent-codex-account-file)
+  (when (file-exists-p agents-codex-account-file)
     (let ((name (string-trim
                  (with-temp-buffer
-                   (insert-file-contents ai-agent-codex-account-file)
+                   (insert-file-contents agents-codex-account-file)
                    (buffer-string)))))
-      (when (alist-get name ai-agent-codex-accounts nil nil #'string=)
+      (when (alist-get name agents-codex-accounts nil nil #'string=)
         name))))
 
-(defun ai-agent-codex--save-account (name)
-  "Persist NAME as the active account to `ai-agent-codex-account-file'."
-  (with-temp-file ai-agent-codex-account-file
+(defun agents-codex--save-account (name)
+  "Persist NAME as the active account to `agents-codex-account-file'."
+  (with-temp-file agents-codex-account-file
     (insert name "\n"))
-  (setq ai-agent-codex--current-account name))
+  (setq agents-codex--current-account name))
 
-(defun ai-agent-codex--prompt-account ()
-  "Prompt for an account from `ai-agent-codex-accounts'.
+(defun agents-codex--prompt-account ()
+  "Prompt for an account from `agents-codex-accounts'.
 Return the account name, or nil."
-  (when ai-agent-codex-accounts
-    (let ((names (mapcar #'car ai-agent-codex-accounts)))
+  (when agents-codex-accounts
+    (let ((names (mapcar #'car agents-codex-accounts)))
       (if (= (length names) 1)
           (car names)
         (completing-read "Account: " names nil t)))))
 
-(defun ai-agent-codex--resolve-account ()
+(defun agents-codex--resolve-account ()
   "Return the active account, loading from disk or prompting as needed.
-On first use, loads from `ai-agent-codex-account-file'.  If no
+On first use, loads from `agents-codex-account-file'.  If no
 persisted account exists, prompts once and saves the selection."
-  (when ai-agent-codex-accounts
-    (unless ai-agent-codex--current-account
-      (setq ai-agent-codex--current-account
-            (ai-agent-codex--load-account)))
-    (or ai-agent-codex--current-account
-        (let ((account (ai-agent-codex--prompt-account)))
+  (when agents-codex-accounts
+    (unless agents-codex--current-account
+      (setq agents-codex--current-account
+            (agents-codex--load-account)))
+    (or agents-codex--current-account
+        (let ((account (agents-codex--prompt-account)))
           (when account
-            (ai-agent-codex--save-account account))
+            (agents-codex--save-account account))
           account))))
 
 ;;;###autoload
-(defun ai-agent-codex-select-account ()
+(defun agents-codex-select-account ()
   "Switch the active Codex account.
-Prompts for an account from `ai-agent-codex-accounts' and
+Prompts for an account from `agents-codex-accounts' and
 persists the selection.  New sessions will use this account."
   (interactive)
-  (unless ai-agent-codex-accounts
-    (user-error "No accounts configured in `ai-agent-codex-accounts'"))
-  (let ((account (ai-agent-codex--prompt-account)))
+  (unless agents-codex-accounts
+    (user-error "No accounts configured in `agents-codex-accounts'"))
+  (let ((account (agents-codex--prompt-account)))
     (when account
-      (ai-agent-codex--save-account account)
+      (agents-codex--save-account account)
       (message "Switched to account: %s" account))))
 
-(defun ai-agent-codex--start-with-account ()
+(defun agents-codex--start-with-account ()
   "Start a new Codex session using the active account."
   (interactive)
-  (let* ((account (ai-agent-codex--resolve-account))
-         (ai-agent-codex--pending-account account))
+  (let* ((account (agents-codex--resolve-account))
+         (agents-codex--pending-account account))
     (codex)))
 
-(defun ai-agent-codex--capture-buffer-account ()
+(defun agents-codex--capture-buffer-account ()
   "Store the account name as a buffer-local variable."
-  (setq ai-agent-codex--buffer-account
-        (or ai-agent-codex--pending-account
-            (ai-agent-codex--resolve-account))))
+  (setq agents-codex--buffer-account
+        (or agents-codex--pending-account
+            (agents-codex--resolve-account))))
 
-(defun ai-agent-codex-buffer-account ()
+(defun agents-codex-buffer-account ()
   "Return the account name for the current buffer, or nil."
-  ai-agent-codex--buffer-account)
+  agents-codex--buffer-account)
 
 ;;;;; Mode line
 
 (declare-function doom-modeline-set-modeline "doom-modeline-core")
 
-(defvar-local ai-agent-codex--start-time nil
+(defvar-local agents-codex--start-time nil
   "Time when this Codex session started.")
 
-(defvar ai-agent-codex--config-model-cache nil
+(defvar agents-codex--config-model-cache nil
   "Cached model lookup as (CONFIG MTIME . MODEL) for Codex config.")
 
-(defun ai-agent-codex--parse-config-model (config-file)
+(defun agents-codex--parse-config-model (config-file)
   "Return the model string declared in CONFIG-FILE, or nil."
   (with-temp-buffer
     (insert-file-contents config-file)
@@ -419,62 +419,62 @@ persists the selection.  New sessions will use this account."
     (when (re-search-forward "^model *= *\"\\([^\"]+\\)\"" nil t)
       (match-string 1))))
 
-(defun ai-agent-codex--read-config-model (&optional account)
+(defun agents-codex--read-config-model (&optional account)
   "Read the model from ACCOUNT's Codex config.
 Cached by file modification time so the doom-modeline ai-session
 segment does not perform disk I/O on every redisplay."
-  (let* ((config-file (ai-agent-codex--config-file account))
+  (let* ((config-file (agents-codex--config-file account))
          (mtime (file-attribute-modification-time
                  (file-attributes config-file))))
     (cond
      ((null mtime) nil)
-     ((and ai-agent-codex--config-model-cache
-           (equal config-file (nth 0 ai-agent-codex--config-model-cache))
-           (equal mtime (nth 1 ai-agent-codex--config-model-cache)))
-      (nth 2 ai-agent-codex--config-model-cache))
+     ((and agents-codex--config-model-cache
+           (equal config-file (nth 0 agents-codex--config-model-cache))
+           (equal mtime (nth 1 agents-codex--config-model-cache)))
+      (nth 2 agents-codex--config-model-cache))
      (t
-      (let ((model (ai-agent-codex--parse-config-model config-file)))
-        (setq ai-agent-codex--config-model-cache
+      (let ((model (agents-codex--parse-config-model config-file)))
+        (setq agents-codex--config-model-cache
               (list config-file mtime model))
         model)))))
 
-(defun ai-agent-codex-set-modeline ()
+(defun agents-codex-set-modeline ()
   "Set the doom-modeline to the `ai-session' modeline for this buffer.
 Also records the session start time."
   (when (codex--buffer-p (current-buffer))
-    (setq ai-agent-codex--start-time (current-time))
+    (setq agents-codex--start-time (current-time))
     (when (require 'doom-modeline-core nil t)
       (doom-modeline-set-modeline 'ai-session))))
 
-(defun ai-agent-codex-status-model ()
+(defun agents-codex-status-model ()
   "Return the model name for the current Codex session."
-  (ai-agent-codex--read-config-model ai-agent-codex--buffer-account))
+  (agents-codex--read-config-model agents-codex--buffer-account))
 
-(defun ai-agent-codex-status-duration-ms ()
+(defun agents-codex-status-duration-ms ()
   "Return session duration in milliseconds, or nil."
-  (when ai-agent-codex--start-time
+  (when agents-codex--start-time
     (truncate (* 1000 (float-time
                        (time-subtract (current-time)
-                                      ai-agent-codex--start-time))))))
+                                      agents-codex--start-time))))))
 
 ;;;;; Theme sync
 
-(defun ai-agent-codex--sync-theme (theme)
+(defun agents-codex--sync-theme (theme)
   "Update Codex persistent theme configuration to THEME.
 THEME is either \"light\" or \"dark\".  Return non-nil when the
 config file changed."
-  (ai-agent-codex--sync-theme-to-config theme))
+  (agents-codex--sync-theme-to-config theme))
 
-(defun ai-agent-codex--sync-theme-to-config (&optional theme)
+(defun agents-codex--sync-theme-to-config (&optional theme)
   "Update `tui.theme' in the active Codex config to THEME.
 When THEME is nil, use the current Emacs AI theme.  Only writes
 the file when the theme value actually changes."
-  (let* ((theme (or theme (ai-agent--theme)))
-         (account (or ai-agent-codex--pending-account
-                      ai-agent-codex--buffer-account))
+  (let* ((theme (or theme (agents--theme)))
+         (account (or agents-codex--pending-account
+                      agents-codex--buffer-account))
          (_ (when account
-              (ai-agent-codex--sync-account-home account)))
-         (config-file (ai-agent-codex--config-file account))
+              (agents-codex--sync-account-home account)))
+         (config-file (agents-codex--config-file account))
          (new-line (format "theme = \"%s\"" theme)))
     (make-directory (file-name-directory config-file) t)
     (with-temp-buffer
@@ -505,14 +505,14 @@ the file when the theme value actually changes."
           (write-region (point-min) (point-max) config-file nil 'silent)
           t)))))
 
-(defun ai-agent-codex--sync-theme-before-start (&rest _)
+(defun agents-codex--sync-theme-before-start (&rest _)
   "Persist the shared AI theme before starting a Codex process."
-  (ai-agent-sync-theme-now)
+  (agents-sync-theme-now)
   nil)
 
 ;;;;; Notification handling
 
-(defun ai-agent-codex--handle-notification (message)
+(defun agents-codex--handle-notification (message)
   "Handle a notification event from Codex CLI.
 MESSAGE is a plist with :type, :buffer-name, :json-data, and :args.
 The :type field is a string from the hook wrapper (e.g. \"Stop\")."
@@ -520,28 +520,28 @@ The :type field is a string from the hook wrapper (e.g. \"Stop\")."
     (when (member hook-type '("Stop" "Notification" "SessionStart"))
       (when-let* ((buf (get-buffer (plist-get message :buffer-name))))
         (with-current-buffer buf
-          (let ((name (ai-agent--session-name (buffer-name))))
+          (let ((name (agents--session-name (buffer-name))))
             (pcase hook-type
               ("Stop"
-               (setq ai-agent--waiting-for-input (current-time))
-               (ai-agent-notify
+               (setq agents--waiting-for-input (current-time))
+               (agents-notify
                 "Codex ready"
                 (format "%s: waiting for your response" name))
-               (ai-agent--scroll-to-bottom buf))
+               (agents--scroll-to-bottom buf))
               ("Notification"
-               (ai-agent-notify
+               (agents-notify
                 "Codex"
                 (format "%s: needs your attention" name)))))))))
   nil)
 
 ;;;;; Skill runner
 
-(defun ai-agent-codex--discover-skills ()
+(defun agents-codex--discover-skills ()
   "Discover available Codex skills.
 Scans the standard Codex skill directories, project-local skill
 directories, and any custom ones from
-`ai-agent-codex-skill-directories' and
-`ai-agent-codex-programmatic-skill-directories'."
+`agents-codex-skill-directories' and
+`agents-codex-programmatic-skill-directories'."
   (let* ((skills (make-hash-table :test #'equal))
          (project-root (or (when-let* ((proj (project-current)))
                              (project-root proj))
@@ -558,13 +558,13 @@ directories, and any custom ones from
                         (expand-file-name ".codex/programmatic-skills"
                                           project-root)))
                 ;; Custom
-                ai-agent-codex-skill-directories
-                ai-agent-codex-programmatic-skill-directories)))
+                agents-codex-skill-directories
+                agents-codex-programmatic-skill-directories)))
     (dolist (dir dirs)
       (when (file-directory-p dir)
         (dolist (file (file-expand-wildcards
                        (expand-file-name "*/SKILL.md" dir)))
-          (when-let* ((meta (ai-agent-codex--parse-skill-frontmatter file))
+          (when-let* ((meta (agents-codex--parse-skill-frontmatter file))
                       (name (plist-get meta :name)))
             (unless (and (plist-member meta :user-invocable)
                          (not (plist-get meta :user-invocable)))
@@ -575,18 +575,18 @@ directories, and any custom ones from
       (sort result (lambda (a b)
                      (string< (plist-get a :name) (plist-get b :name)))))))
 
-(defun ai-agent-codex--parse-skill-frontmatter (file)
+(defun agents-codex--parse-skill-frontmatter (file)
   "Parse YAML frontmatter from skill FILE and return a plist."
-  (ai-agent-parse-skill-frontmatter file))
+  (agents-parse-skill-frontmatter file))
 
-(defun ai-agent-codex--find-skill (skill-name)
+(defun agents-codex--find-skill (skill-name)
   "Return discovered metadata for SKILL-NAME, or nil."
   (let ((name (string-remove-prefix "/" skill-name)))
-    (cl-find name (ai-agent-codex--discover-skills)
+    (cl-find name (agents-codex--discover-skills)
              :key (lambda (skill) (plist-get skill :name))
              :test #'equal)))
 
-(defun ai-agent-codex--skill-prompt (skill skill-name arguments)
+(defun agents-codex--skill-prompt (skill skill-name arguments)
   "Return a prompt for running SKILL-NAME with ARGUMENTS.
 When SKILL metadata is available, point Codex at the skill file.
 Otherwise return a slash invocation for Codex-native skill lookup."
@@ -607,9 +607,9 @@ Otherwise return a slash invocation for Codex-native skill lookup."
               (if (and arguments (not (string-empty-p arguments)))
                   (format "\n\nArguments: %s" arguments)
                 ""))
-    (ai-agent-codex--slash-invocation skill-name arguments)))
+    (agents-codex--slash-invocation skill-name arguments)))
 
-(defun ai-agent-codex--slash-invocation (skill-name arguments)
+(defun agents-codex--slash-invocation (skill-name arguments)
   "Return a Codex slash invocation for SKILL-NAME and ARGUMENTS."
   (let ((command (if (string-prefix-p "/" skill-name)
                      skill-name
@@ -618,7 +618,7 @@ Otherwise return a slash invocation for Codex-native skill lookup."
         (format "%s %s" command arguments)
       command)))
 
-(defun ai-agent-codex--display-result (buffer-name title result)
+(defun agents-codex--display-result (buffer-name title result)
   "Display RESULT in BUFFER-NAME with TITLE."
   (let ((buf (get-buffer-create buffer-name)))
     (with-current-buffer buf
@@ -636,49 +636,49 @@ Otherwise return a slash invocation for Codex-native skill lookup."
       (goto-char (point-min)))
     (pop-to-buffer buf)))
 
-(defun ai-agent-codex--build-exec-command (prompt dir)
+(defun agents-codex--build-exec-command (prompt dir)
   "Return the `codex exec' command for PROMPT in DIR."
   (append (list codex-program)
           codex-program-switches
-          (ai-agent-codex--exec-approval-args)
+          (agents-codex--exec-approval-args)
           (list "exec")
-          (ai-agent-codex--exec-model-args)
-          (ai-agent-codex--exec-profile-args)
-          (ai-agent-codex--exec-sandbox-args)
-          (ai-agent-codex--exec-image-args)
+          (agents-codex--exec-model-args)
+          (agents-codex--exec-profile-args)
+          (agents-codex--exec-sandbox-args)
+          (agents-codex--exec-image-args)
           (list "--cd" (expand-file-name dir)
                 "--color" "never")
-          (when ai-agent-codex-exec-skip-git-repo-check
+          (when agents-codex-exec-skip-git-repo-check
             (list "--skip-git-repo-check"))
           (list prompt)))
 
-(defun ai-agent-codex--exec-model-args ()
+(defun agents-codex--exec-model-args ()
   "Return `codex exec' model arguments."
   (when codex-model
     (list "--model" codex-model)))
 
-(defun ai-agent-codex--exec-profile-args ()
+(defun agents-codex--exec-profile-args ()
   "Return `codex exec' profile arguments."
   (when codex-profile
     (list "--profile" codex-profile)))
 
-(defun ai-agent-codex--exec-sandbox-args ()
+(defun agents-codex--exec-sandbox-args ()
   "Return `codex exec' sandbox arguments."
-  (when-let* ((mode (or ai-agent-codex-exec-sandbox-mode codex-sandbox-mode)))
+  (when-let* ((mode (or agents-codex-exec-sandbox-mode codex-sandbox-mode)))
     (list "--sandbox" (symbol-name mode))))
 
-(defun ai-agent-codex--exec-approval-args ()
+(defun agents-codex--exec-approval-args ()
   "Return Codex approval-policy arguments."
-  (when-let* ((policy (or ai-agent-codex-exec-approval-policy
+  (when-let* ((policy (or agents-codex-exec-approval-policy
                           codex-approval-policy)))
     (list "--ask-for-approval" (symbol-name policy))))
 
-(defun ai-agent-codex--exec-image-args ()
+(defun agents-codex--exec-image-args ()
   "Return `codex exec' image arguments."
   (cl-loop for image in codex-default-images
            append (list "--image" image)))
 
-(defun ai-agent-codex--exec-process-environment (dir)
+(defun agents-codex--exec-process-environment (dir)
   "Return the process environment for non-interactive Codex runs in DIR."
   (let* ((buffer-name (format "*codex-exec:%s*"
                               (file-name-nondirectory
@@ -691,15 +691,15 @@ Otherwise return a slash invocation for Codex-native skill lookup."
             extra-env
             process-environment)))
 
-(defun ai-agent-codex--run-prompt (prompt &rest kwargs)
+(defun agents-codex--run-prompt (prompt &rest kwargs)
   "Run PROMPT non-interactively via `codex exec'.
 KWARGS accepts :dir and :callback.  The callback receives a plist
 with :exit-code, :duration, :text, and :raw."
   (let* ((dir (or (plist-get kwargs :dir) default-directory))
          (callback (or (plist-get kwargs :callback)
-                       (error "ai-agent-codex--run-prompt: :callback required")))
-         (args (ai-agent-codex--build-exec-command prompt dir))
-         (env (ai-agent-codex--exec-process-environment dir))
+                       (error "agents-codex--run-prompt: :callback required")))
+         (args (agents-codex--build-exec-command prompt dir))
+         (env (agents-codex--exec-process-environment dir))
          (start-time (current-time))
          (output-buf (generate-new-buffer " *codex-exec-output*")))
     (unless (executable-find codex-program)
@@ -726,11 +726,11 @@ with :exit-code, :duration, :text, and :raw."
              (funcall callback result))))))))
 
 ;;;###autoload
-(defun ai-agent-codex-run-skill (skill-name &optional arguments)
+(defun agents-codex-run-skill (skill-name &optional arguments)
   "Run Codex skill SKILL-NAME with optional ARGUMENTS.
 Runs the skill non-interactively via `codex exec'."
   (interactive
-   (let* ((skills (ai-agent-codex--discover-skills))
+   (let* ((skills (agents-codex--discover-skills))
           (_ (unless skills (user-error "No skills found")))
           (name (completing-read
                  "Skill: "
@@ -738,47 +738,47 @@ Runs the skill non-interactively via `codex exec'."
                  nil t))
           (args (read-string (format "Arguments for %s: " name))))
      (list name (unless (string-empty-p args) args))))
-  (let* ((skill (ai-agent-codex--find-skill skill-name))
-         (prompt (ai-agent-codex--skill-prompt skill skill-name arguments)))
-    (message "Running Codex skill %s..." (ai-agent-codex--slash-invocation skill-name nil))
-    (ai-agent-codex--run-prompt
+  (let* ((skill (agents-codex--find-skill skill-name))
+         (prompt (agents-codex--skill-prompt skill skill-name arguments)))
+    (message "Running Codex skill %s..." (agents-codex--slash-invocation skill-name nil))
+    (agents-codex--run-prompt
      prompt
      :dir default-directory
      :callback
      (lambda (result)
-       (ai-agent-codex--display-result
+       (agents-codex--display-result
         (format "*Codex Skill: %s*" (string-remove-prefix "/" skill-name))
-        (format "Codex %s" (ai-agent-codex--slash-invocation skill-name nil))
+        (format "Codex %s" (agents-codex--slash-invocation skill-name nil))
         result)))))
 
 ;;;;; Project audit
 
 ;;;###autoload
-(defun ai-agent-codex-audit-project ()
+(defun agents-codex-audit-project ()
   "Run a comprehensive audit of a project via Codex.
-Sequentially runs each skill in `ai-agent-codex-audit-skills'
+Sequentially runs each skill in `agents-codex-audit-skills'
 via `codex exec'."
   (interactive)
-  (let* ((dir (ai-agent-codex--read-audit-directory))
-         (skills ai-agent-codex-audit-skills))
+  (let* ((dir (agents-codex--read-audit-directory))
+         (skills agents-codex-audit-skills))
     (when (yes-or-no-p
            (format "Run %d audit(s) on %s?" (length skills) dir))
-      (ai-agent-codex--audit-run-next
+      (agents-codex--audit-run-next
        (list :queue skills
              :results nil
              :dir dir
              :start-time (current-time))))))
 
-(defun ai-agent-codex--audit-run-next (state)
+(defun agents-codex--audit-run-next (state)
   "Run the next audit task in STATE."
   (if (null (plist-get state :queue))
-      (ai-agent-codex--audit-finish state)
+      (agents-codex--audit-finish state)
     (let* ((queue (plist-get state :queue))
            (skill-name (car queue))
-           (skill (ai-agent-codex--find-skill skill-name))
-           (prompt (ai-agent-codex--skill-prompt skill skill-name "--accept")))
+           (skill (agents-codex--find-skill skill-name))
+           (prompt (agents-codex--skill-prompt skill skill-name "--accept")))
       (message "Running Codex audit %s..." skill-name)
-      (ai-agent-codex--run-prompt
+      (agents-codex--run-prompt
        prompt
        :dir (plist-get state :dir)
        :callback
@@ -787,9 +787,9 @@ via `codex exec'."
                     (cons (append (list :skill skill-name) result)
                           (plist-get state :results)))
          (plist-put state :queue (cdr queue))
-         (ai-agent-codex--audit-run-next state))))))
+         (agents-codex--audit-run-next state))))))
 
-(defun ai-agent-codex--audit-finish (state)
+(defun agents-codex--audit-finish (state)
   "Display the audit results from STATE."
   (let* ((results (reverse (plist-get state :results)))
          (total (length results))
@@ -827,32 +827,32 @@ via `codex exec'."
     (message "Codex audit complete: %d/%d succeeded (%.1fs)"
              successes total duration)))
 
-(defun ai-agent-codex--read-audit-directory ()
+(defun agents-codex--read-audit-directory ()
   "Prompt for a project directory with completion."
   (let* ((candidates (mapcar #'abbreviate-file-name
-                             ai-agent-codex-audit-project-directories))
+                             agents-codex-audit-project-directories))
          (input (completing-read "Project directory: " candidates nil nil))
          (dir (file-truename (expand-file-name input))))
     (unless (file-directory-p dir)
       (user-error "Not a directory: %s" dir))
     (unless (member dir (mapcar #'file-truename
-                                ai-agent-codex-audit-project-directories))
-      (customize-save-variable 'ai-agent-codex-audit-project-directories
-                               (append ai-agent-codex-audit-project-directories
+                                agents-codex-audit-project-directories))
+      (customize-save-variable 'agents-codex-audit-project-directories
+                               (append agents-codex-audit-project-directories
                                        (list dir))))
     dir))
 
 ;;;;; Debug backtrace
 
 ;;;###autoload
-(defun ai-agent-codex-debug-backtrace ()
+(defun agents-codex-debug-backtrace ()
   "Save the backtrace, identify the offending package, and open Codex."
   (interactive)
-  (let ((backtrace-file (expand-file-name ai-agent-backtrace-file)))
-    (run-with-timer 0 nil #'ai-agent-codex--debug-identify-package backtrace-file)
-    (ai-agent-save-backtrace)))
+  (let ((backtrace-file (expand-file-name agents-backtrace-file)))
+    (run-with-timer 0 nil #'agents-codex--debug-identify-package backtrace-file)
+    (agents-save-backtrace)))
 
-(defun ai-agent-codex--debug-identify-package (backtrace-file)
+(defun agents-codex--debug-identify-package (backtrace-file)
   "Identify candidate packages from BACKTRACE-FILE and let the user choose."
   (unless (file-exists-p backtrace-file)
     (user-error "Backtrace file not found: %s" backtrace-file))
@@ -862,9 +862,9 @@ via `codex exec'."
   (let ((contents (with-temp-buffer
                     (insert-file-contents backtrace-file)
                     (buffer-string)))
-        (gptel-backend (alist-get ai-agent-codex-debug-backtrace-backend
+        (gptel-backend (alist-get agents-codex-debug-backtrace-backend
                                  gptel--known-backends nil nil #'string=))
-        (gptel-model ai-agent-codex-debug-backtrace-model)
+        (gptel-model agents-codex-debug-backtrace-model)
         (gptel-use-tools nil))
     (gptel-request
      (format "Backtrace file: %s\n\nContents:\n%s" backtrace-file contents)
@@ -876,12 +876,12 @@ via `codex exec'."
          (let* ((candidates (mapcar #'string-trim (split-string response ",")))
                 (selected (completing-read "Package to debug: " candidates nil nil nil nil
                                            (car candidates))))
-           (ai-agent-codex--debug-start-session
+           (agents-codex--debug-start-session
             (intern selected) backtrace-file)))))))
 
-(defun ai-agent-codex--debug-start-session (package backtrace-file)
+(defun agents-codex--debug-start-session (package backtrace-file)
   "Start a Codex session for PACKAGE with BACKTRACE-FILE."
-  (let* ((dir (or (ai-agent--package-source-directory package)
+  (let* ((dir (or (agents--package-source-directory package)
                   (user-error "Package `%s' not found" package)))
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
@@ -892,39 +892,39 @@ via `codex exec'."
 ;;;;; Handoff
 
 ;;;###autoload
-(defun ai-agent-codex-handoff (&optional buffer-name)
+(defun agents-codex-handoff (&optional buffer-name)
   "Close this Codex session and start a new one with the handoff prompt."
   (interactive)
-  (unless (file-exists-p ai-agent-codex-handoff-file)
+  (unless (file-exists-p agents-codex-handoff-file)
     (user-error "No handoff file at %s — run /handoff first"
-                ai-agent-codex-handoff-file))
+                agents-codex-handoff-file))
   (let* ((prompt (with-temp-buffer
-                   (insert-file-contents ai-agent-codex-handoff-file)
+                   (insert-file-contents agents-codex-handoff-file)
                    (string-trim (buffer-string))))
-         (source-buffer (ai-agent-codex--handoff-source-buffer buffer-name))
+         (source-buffer (agents-codex--handoff-source-buffer buffer-name))
          (account (when source-buffer
-                    (buffer-local-value 'ai-agent-codex--buffer-account
+                    (buffer-local-value 'agents-codex--buffer-account
                                         source-buffer)))
-         (dir (ai-agent-codex--handoff-directory source-buffer)))
+         (dir (agents-codex--handoff-directory source-buffer)))
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty"))
     (when source-buffer
-      (ai-agent--force-kill-buffer source-buffer))
-    (let ((ai-agent-codex--pending-account
-           (or account (ai-agent-codex--resolve-account))))
+      (agents--force-kill-buffer source-buffer))
+    (let ((agents-codex--pending-account
+           (or account (agents-codex--resolve-account))))
       (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
         (codex--start nil (list prompt) nil t)))))
 
-(defun ai-agent-codex-handoff-from-emacsclient ()
-  "Run `ai-agent-codex-handoff' for the client-provided buffer name.
+(defun agents-codex-handoff-from-emacsclient ()
+  "Run `agents-codex-handoff' for the client-provided buffer name.
 The first value in `server-eval-args-left' is treated as the Codex
 buffer that requested the handoff."
   (interactive)
   (let ((buffer-name (car server-eval-args-left)))
     (setq server-eval-args-left nil)
-    (ai-agent-codex-handoff buffer-name)))
+    (agents-codex-handoff buffer-name)))
 
-(defun ai-agent-codex--handoff-source-buffer (buffer-name)
+(defun agents-codex--handoff-source-buffer (buffer-name)
   "Return the Codex source buffer named BUFFER-NAME, or current buffer."
   (cond
    ((and buffer-name (not (string-empty-p buffer-name)))
@@ -937,7 +937,7 @@ buffer that requested the handoff."
    ((codex--buffer-p (current-buffer))
     (current-buffer))))
 
-(defun ai-agent-codex--handoff-directory (source-buffer)
+(defun agents-codex--handoff-directory (source-buffer)
   "Return the project directory for SOURCE-BUFFER or fallback context."
   (if source-buffer
       (buffer-local-value 'default-directory source-buffer)
@@ -946,7 +946,7 @@ buffer that requested the handoff."
 ;;;;; Restart
 
 ;;;###autoload
-(defun ai-agent-codex-restart ()
+(defun agents-codex-restart ()
   "Kill the current Codex session and resume it in place.
 Useful when a setting change requires relaunching Codex.  Preserves the
 session's directory and instance name.  Codex does not expose a
@@ -957,39 +957,39 @@ the most recently updated one for that directory."
   (unless (codex--buffer-p (current-buffer))
     (user-error "Not in a Codex buffer"))
   (let ((dir default-directory)
-        (account ai-agent-codex--buffer-account)
+        (account agents-codex--buffer-account)
         (instance-name (codex--extract-instance-name-from-buffer-name
                         (buffer-name))))
-    (ai-agent--force-kill-buffer (current-buffer))
-    (let ((ai-agent-codex--pending-account
-           (or account (ai-agent-codex--resolve-account))))
+    (agents--force-kill-buffer (current-buffer))
+    (let ((agents-codex--pending-account
+           (or account (agents-codex--resolve-account))))
       (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
         (codex--start-subcommand "resume" t nil instance-name)))))
 
 ;;;;; Start or switch (Codex-specific entry point)
 
 ;;;###autoload
-(defun ai-agent-codex-start-or-switch ()
+(defun agents-codex-start-or-switch ()
   "Start a new Codex session or switch to an existing one.
 If no Codex sessions exist, start a new one.  Otherwise, show the
 unified session switcher."
   (interactive)
   (if (null (codex--find-all-codex-buffers))
-      (ai-agent-codex--start-with-account)
-    (ai-agent--ensure-all-session-keys)
-    (transient-setup 'ai-agent--session-switcher)))
+      (agents-codex--start-with-account)
+    (agents--ensure-all-session-keys)
+    (transient-setup 'agents--session-switcher)))
 
 ;;;;; Branch navigation
 
 ;;;###autoload
-(defun ai-agent-codex-resume (arg)
+(defun agents-codex-resume (arg)
   "Resume a previous Codex session.
 With prefix ARG, use Codex CLI's `--last' flag."
   (interactive "P")
   (codex-resume arg))
 
 ;;;###autoload
-(defun ai-agent-codex-fork (arg)
+(defun agents-codex-fork (arg)
   "Fork a previous Codex session.
 With prefix ARG, use Codex CLI's `--last' flag."
   (interactive "P")
@@ -997,35 +997,35 @@ With prefix ARG, use Codex CLI's `--last' flag."
 
 ;;;; Hooks
 
-(add-hook 'codex-event-hook #'ai-agent-codex--handle-notification)
-(add-hook 'kill-buffer-query-functions #'ai-agent-protect-buffer)
-(add-hook 'codex-start-hook #'ai-agent--assign-session-key)
-(add-hook 'codex-start-hook #'ai-agent--refresh-display-names)
-(add-hook 'codex-start-hook #'ai-agent-disable-scrollback-truncation)
-(add-hook 'codex-start-hook #'ai-agent-setup-snippet-keys)
-(add-hook 'codex-start-hook #'ai-agent-fix-rendering)
-(add-hook 'codex-start-hook #'ai-agent-codex--capture-buffer-account)
-(add-hook 'codex-start-hook #'ai-agent-codex-set-modeline)
+(add-hook 'codex-event-hook #'agents-codex--handle-notification)
+(add-hook 'kill-buffer-query-functions #'agents-protect-buffer)
+(add-hook 'codex-start-hook #'agents--assign-session-key)
+(add-hook 'codex-start-hook #'agents--refresh-display-names)
+(add-hook 'codex-start-hook #'agents-disable-scrollback-truncation)
+(add-hook 'codex-start-hook #'agents-setup-snippet-keys)
+(add-hook 'codex-start-hook #'agents-fix-rendering)
+(add-hook 'codex-start-hook #'agents-codex--capture-buffer-account)
+(add-hook 'codex-start-hook #'agents-codex-set-modeline)
 (add-hook 'codex-process-environment-functions
-          #'ai-agent-codex-account-env)
+          #'agents-codex-account-env)
 (add-hook 'codex-process-environment-functions
-          #'ai-agent-codex--sync-theme-before-start)
-(add-hook 'kill-buffer-hook #'ai-agent--release-session-key)
-(add-hook 'kill-buffer-hook #'ai-agent--refresh-display-names-deferred)
+          #'agents-codex--sync-theme-before-start)
+(add-hook 'kill-buffer-hook #'agents--release-session-key)
+(add-hook 'kill-buffer-hook #'agents--refresh-display-names-deferred)
 (advice-add 'codex--do-send-command :before
-            #'ai-agent--clear-waiting-for-input)
+            #'agents--clear-waiting-for-input)
 
 ;;;;; Exit and kill on exit
 
 ;;;###autoload
-(defun ai-agent-codex-exit ()
+(defun agents-codex-exit ()
   "Exit the current Codex session and kill its buffer.
 Codex CLI does not support `/exit', so this sends the process a
 SIGHUP and kills the buffer from the Emacs side."
   (interactive)
-  (ai-agent-kill-session-buffer))
+  (agents-kill-session-buffer))
 
-(defun ai-agent-codex--intercept-exit (orig-fn cmd)
+(defun agents-codex--intercept-exit (orig-fn cmd)
   "Intercept `/exit' and kill the session instead of forwarding it.
 ORIG-FN is `codex--do-send-command'.  CMD is the command string.
 Codex CLI does not recognize `/exit', so we handle it on the
@@ -1033,10 +1033,10 @@ Emacs side to match Claude Code's behavior."
   (if (string= (string-trim cmd) "/exit")
       (when-let* ((buf (codex--get-or-prompt-for-buffer)))
         (with-current-buffer buf
-          (ai-agent-codex-exit)))
+          (agents-codex-exit)))
     (funcall orig-fn cmd)))
 
-(defun ai-agent-codex-setup-kill-on-exit ()
+(defun agents-codex-setup-kill-on-exit ()
   "Arrange for the buffer to be killed when the Codex process exits."
   (interactive)
   (when (codex--buffer-p (current-buffer))
@@ -1052,80 +1052,80 @@ Emacs side to match Claude Code's behavior."
                  (kill-buffer buf)
                (error nil)))))))))
 
-(add-hook 'codex-start-hook #'ai-agent-codex-setup-kill-on-exit)
-(advice-add 'codex--do-send-command :around #'ai-agent-codex--intercept-exit)
+(add-hook 'codex-start-hook #'agents-codex-setup-kill-on-exit)
+(advice-add 'codex--do-send-command :around #'agents-codex--intercept-exit)
 
 ;;;;; Account menu infix
 
 (eval-and-compile
-  (defclass ai-agent-codex--account-variable (transient-lisp-variable)
+  (defclass agents-codex--account-variable (transient-lisp-variable)
     ()
     "An infix that displays and selects the active Codex account."))
 
-(cl-defmethod transient-infix-read ((_obj ai-agent-codex--account-variable))
+(cl-defmethod transient-infix-read ((_obj agents-codex--account-variable))
   "Prompt for a Codex account."
-  (ai-agent-codex--prompt-account))
+  (agents-codex--prompt-account))
 
-(cl-defmethod transient-infix-set ((obj ai-agent-codex--account-variable) value)
+(cl-defmethod transient-infix-set ((obj agents-codex--account-variable) value)
   "Set the account variable and persist VALUE to disk."
   (set (oref obj variable) value)
   (when value
-    (ai-agent-codex--save-account value)))
+    (agents-codex--save-account value)))
 
-(cl-defmethod transient-init-value ((obj ai-agent-codex--account-variable))
+(cl-defmethod transient-init-value ((obj agents-codex--account-variable))
   "Initialize Codex account infix from persisted state."
   (unless (oref obj value)
-    (set (oref obj variable) (ai-agent-codex--load-account)))
+    (set (oref obj variable) (agents-codex--load-account)))
   (cl-call-next-method obj))
 
-(transient-define-infix ai-agent-codex--infix-account ()
+(transient-define-infix agents-codex--infix-account ()
   "Select the active Codex account."
-  :class 'ai-agent-codex--account-variable
-  :variable 'ai-agent-codex--current-account
+  :class 'agents-codex--account-variable
+  :variable 'agents-codex--current-account
   :description "codex account")
 
 ;;;;; Extend unified menu
 
-(defun ai-agent-codex--remove-menu-suffixes ()
+(defun agents-codex--remove-menu-suffixes ()
   "Remove Codex menu suffixes before appending them.
 `transient-append-suffix' mutates the prefix definition, so
 reloading this file can otherwise leave stale or duplicate
-entries in `ai-agent-menu'."
-  (dolist (command '(ai-agent-codex-resume
-                     ai-agent-codex-fork
-                     ai-agent-codex--infix-account))
+entries in `agents-menu'."
+  (dolist (command '(agents-codex-resume
+                     agents-codex-fork
+                     agents-codex--infix-account))
     (while (ignore-errors
-             (transient-get-suffix 'ai-agent-menu command)
+             (transient-get-suffix 'agents-menu command)
              t)
-      (transient-remove-suffix 'ai-agent-menu command))))
+      (transient-remove-suffix 'agents-menu command))))
 
-(defun ai-agent-codex--account-menu-location ()
+(defun agents-codex--account-menu-location ()
   "Return the menu location after which to insert the Codex account infix."
   (if (ignore-errors
-        (transient-get-suffix 'ai-agent-menu
-                              'ai-agent-claude--infix-account)
+        (transient-get-suffix 'agents-menu
+                              'agents-claude--infix-account)
         t)
-      'ai-agent-claude--infix-account
+      'agents-claude--infix-account
     "-t"))
 
-(defun ai-agent-codex--append-menu-suffixes ()
-  "Append Codex suffixes to `ai-agent-menu' in a stable order."
-  (ai-agent-codex--remove-menu-suffixes)
-  (transient-append-suffix 'ai-agent-menu "x"
-    '("R" "codex resume" ai-agent-codex-resume))
-  (transient-append-suffix 'ai-agent-menu "R"
-    '("F" "codex fork" ai-agent-codex-fork))
-  (transient-append-suffix 'ai-agent-menu
-    (ai-agent-codex--account-menu-location)
-    '("-x" ai-agent-codex--infix-account)))
+(defun agents-codex--append-menu-suffixes ()
+  "Append Codex suffixes to `agents-menu' in a stable order."
+  (agents-codex--remove-menu-suffixes)
+  (transient-append-suffix 'agents-menu "x"
+    '("R" "codex resume" agents-codex-resume))
+  (transient-append-suffix 'agents-menu "R"
+    '("F" "codex fork" agents-codex-fork))
+  (transient-append-suffix 'agents-menu
+    (agents-codex--account-menu-location)
+    '("-x" agents-codex--infix-account)))
 
-(with-eval-after-load 'ai-agent
-  (ai-agent-codex--append-menu-suffixes))
+(with-eval-after-load 'agents
+  (agents-codex--append-menu-suffixes))
 
-(with-eval-after-load 'ai-agent-claude
-  (ai-agent-codex--append-menu-suffixes))
+(with-eval-after-load 'agents-claude
+  (agents-codex--append-menu-suffixes))
 
 ;;;; Provide
 
-(provide 'ai-agent-codex)
-;;; ai-agent-codex.el ends here
+(provide 'agents-codex)
+;;; agents-codex.el ends here

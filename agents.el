@@ -1,9 +1,9 @@
-;;; ai-agent.el --- Shared extensions for AI coding CLI tools -*- lexical-binding: t -*-
+;;; agents.el --- Shared extensions for AI coding CLI tools -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026
 
 ;; Author: Pablo Stafforini
-;; URL: https://github.com/benthamite/ai-agent
+;; URL: https://github.com/benthamite/agents
 ;; Version: 0.1
 ;; Package-Requires: ((emacs "30.0") (transient "0.9") (consult "1.0"))
 
@@ -26,8 +26,8 @@
 
 ;; Shared abstractions for AI coding CLI tool extensions.
 ;; Provides backend-agnostic session management, notifications, and
-;; terminal integration for packages like `ai-agent-claude' and
-;; `ai-agent-codex'.
+;; terminal integration for packages like `agents-claude' and
+;; `agents-codex'.
 
 ;;; Code:
 
@@ -37,42 +37,42 @@
 
 ;;;; Custom group
 
-(defgroup ai-agent ()
+(defgroup agents ()
   "Shared extensions for AI coding CLI tools."
   :group 'tools)
 
-(defcustom ai-agent-before-exit-functions nil
-  "Abnormal hook run before `ai-agent-exit' exits a session.
+(defcustom agents-before-exit-functions nil
+  "Abnormal hook run before `agents-exit' exits a session.
 Each function is called with two arguments: the resolved BACKEND
 symbol and the session BUFFER.  If any function returns nil, the
 exit is aborted."
   :type 'hook
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-before-exit-skill-name nil
+(defcustom agents-before-exit-skill-name nil
   "Skill name to submit before exiting matching AI sessions.
-When nil or empty, `ai-agent-run-skill-before-exit' does nothing."
+When nil or empty, `agents-run-skill-before-exit' does nothing."
   :type '(choice (const :tag "Disabled" nil) string)
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-before-exit-skill-directories nil
-  "Directories whose sessions should run `ai-agent-before-exit-skill-name'."
+(defcustom agents-before-exit-skill-directories nil
+  "Directories whose sessions should run `agents-before-exit-skill-name'."
   :type '(repeat directory)
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-skill-command-prefix-alist
+(defcustom agents-skill-command-prefix-alist
   '((claude-code . "/")
     (codex . "$"))
   "Alist mapping backend symbols to interactive skill command prefixes."
   :type '(alist :key-type symbol :value-type string)
-  :group 'ai-agent)
+  :group 'agents)
 
-(defvar-local ai-agent--before-exit-skill-sent nil
+(defvar-local agents--before-exit-skill-sent nil
   "Non-nil when the configured before-exit skill was sent in this buffer.")
 
 ;;;; Backend registry
 
-(defvar ai-agent-backends nil
+(defvar agents-backends nil
   "Alist of registered AI backends.
 Each entry is (SYMBOL . PLIST) where PLIST has keys:
   :buffer-p              function (buffer) -> bool
@@ -112,52 +112,52 @@ Optional command keys for dispatching shared commands:
   :restart               function () (restart current session)
   :sync-theme            function (theme) (persist light/dark theme)")
 
-(defvar-local ai-agent--backend nil
+(defvar-local agents--backend nil
   "Cached backend symbol for this buffer.")
 
-(defconst ai-agent--required-backend-keys
+(defconst agents--required-backend-keys
   '(:buffer-p :find-all-buffers :extract-instance-name :start-new)
   "Backend plist keys required by the shared session layer.")
 
-(defun ai-agent-register-backend (symbol plist)
+(defun agents-register-backend (symbol plist)
   "Register SYMBOL as an AI agent backend with PLIST properties."
-  (ai-agent--validate-backend symbol plist)
-  (setf (alist-get symbol ai-agent-backends) plist))
+  (agents--validate-backend symbol plist)
+  (setf (alist-get symbol agents-backends) plist))
 
-(defun ai-agent--validate-backend (symbol plist)
+(defun agents--validate-backend (symbol plist)
   "Signal an error if SYMBOL's backend PLIST is missing required keys."
-  (dolist (key ai-agent--required-backend-keys)
+  (dolist (key agents--required-backend-keys)
     (unless (plist-get plist key)
       (error "AI backend `%s' is missing required key `%s'" symbol key))))
 
-(defun ai-agent--detect-backend (&optional buffer)
+(defun agents--detect-backend (&optional buffer)
   "Detect which AI backend BUFFER belongs to.
 Try each registered backend's :buffer-p predicate.  Return the
 backend symbol or nil."
   (let ((buf (or buffer (current-buffer))))
-    (or (buffer-local-value 'ai-agent--backend buf)
+    (or (buffer-local-value 'agents--backend buf)
         (let ((found (cl-find-if
                       (lambda (entry)
                         (funcall (plist-get (cdr entry) :buffer-p) buf))
-                      ai-agent-backends)))
+                      agents-backends)))
           (when found
             (with-current-buffer buf
-              (setq ai-agent--backend (car found)))
+              (setq agents--backend (car found)))
             (car found))))))
 
-(defun ai-agent--backend-get (backend key)
+(defun agents--backend-get (backend key)
   "Get KEY from the registered plist for BACKEND."
-  (plist-get (alist-get backend ai-agent-backends) key))
+  (plist-get (alist-get backend agents-backends) key))
 
-(defun ai-agent-backend-icon (backend &optional face)
+(defun agents-backend-icon (backend &optional face)
   "Return the icon string for BACKEND.
 FACE is passed to the icon function to control the rendering color;
-see `ai-agent-svg-icon'.  The :icon property can be a string or a
+see `agents-svg-icon'.  The :icon property can be a string or a
 function; if a function, it is called with FACE to produce the icon."
-  (let ((icon (ai-agent--backend-get backend :icon)))
+  (let ((icon (agents--backend-get backend :icon)))
     (if (functionp icon) (funcall icon face) (or icon ""))))
 
-(defun ai-agent-svg-icon (svg-data &optional face)
+(defun agents-svg-icon (svg-data &optional face)
   "Return a propertized string displaying SVG-DATA as an inline icon.
 FACE determines the color and height; it defaults to `default'.
 The SVG should use \"currentColor\" for fill or stroke attributes,
@@ -174,15 +174,15 @@ Falls back to an empty string when SVG support is unavailable."
            (img (create-image colored 'svg t :height h :ascent 'center)))
       (propertize " " 'display img 'rear-nonsticky '(display)))))
 
-(defun ai-agent--find-all-buffers ()
+(defun agents--find-all-buffers ()
   "Return all active AI session buffers across all backends."
   (let (result)
-    (dolist (entry ai-agent-backends)
+    (dolist (entry agents-backends)
       (let ((bufs (funcall (plist-get (cdr entry) :find-all-buffers))))
         (setq result (nconc result bufs))))
     result))
 
-(defun ai-agent--session-name (buffer-name)
+(defun agents--session-name (buffer-name)
   "Extract the project name from BUFFER-NAME.
 Given \"*claude:~/path/to/project/:default*\" or
 \"*codex:~/path/to/project/:default*\", return \"project\"."
@@ -192,101 +192,101 @@ Given \"*claude:~/path/to/project/:default*\" or
 
 ;;;; Customization
 
-(defcustom ai-agent-protect-buffers t
+(defcustom agents-protect-buffers t
   "When non-nil, prompt for confirmation before killing AI session buffers."
   :type 'boolean
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-alert-style 'both
+(defcustom agents-alert-style 'both
   "Style of alert when an AI session finishes responding.
-Only takes effect when `ai-agent-alert-on-ready' is non-nil."
+Only takes effect when `agents-alert-on-ready' is non-nil."
   :type '(choice (const :tag "Visual notification only" visual)
                  (const :tag "Sound only" sound)
                  (const :tag "Both visual and sound" both))
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-alert-sound nil
+(defcustom agents-alert-sound nil
   "Path to the sound file played when a session finishes responding.
-When nil, sound alerts are disabled even if `ai-agent-alert-style'
+When nil, sound alerts are disabled even if `agents-alert-style'
 is `sound' or `both'."
   :type '(choice (const :tag "No sound" nil) file)
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-alert-sound-player nil
-  "External program used to play `ai-agent-alert-sound'.
-When nil, `ai-agent--alert-sound' uses `play-sound-file' when
+(defcustom agents-alert-sound-player nil
+  "External program used to play `agents-alert-sound'.
+When nil, `agents--alert-sound' uses `play-sound-file' when
 that function is available."
   :type '(choice (const :tag "Use Emacs sound support" nil) string)
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-backtrace-file
-  (expand-file-name "ai-agent-backtrace.el" temporary-file-directory)
-  "File where `ai-agent-save-backtrace' writes Emacs backtraces."
+(defcustom agents-backtrace-file
+  (expand-file-name "agents-backtrace.el" temporary-file-directory)
+  "File where `agents-save-backtrace' writes Emacs backtraces."
   :type 'file
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-alert-on-ready nil
+(defcustom agents-alert-on-ready nil
   "When non-nil, alert the user when an AI session finishes responding."
   :type 'boolean
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-sync-theme nil
+(defcustom agents-sync-theme nil
   "When non-nil, sync AI CLI themes with the current Emacs theme.
 Theme changes are persisted through registered backend
 `:sync-theme' handlers.  This intentionally updates configuration
 files instead of sending slash commands to active terminal sessions,
 so it does not inject text into a running conversation."
   :type 'boolean
-  :group 'ai-agent)
+  :group 'agents)
 
-(defcustom ai-agent-sigwinch-delay 0.5
+(defcustom agents-sigwinch-delay 0.5
   "Delay in seconds before sending SIGWINCH to fix terminal rendering."
   :type 'number
-  :group 'ai-agent)
+  :group 'agents)
 
 ;;;; Faces
 
-(defface ai-agent-waiting
+(defface agents-waiting
   '((t :inherit success))
   "Face for sessions waiting for user input in the session switcher."
-  :group 'ai-agent)
+  :group 'agents)
 
-(defface ai-agent-waiting-with-background
+(defface agents-waiting-with-background
   '((t :inherit warning))
   "Face for sessions waiting for user input while background work runs.
 Applied in the session switcher when the backend's
 `:has-background-tasks-p' reports ongoing work, to distinguish
-these sessions from `ai-agent-waiting' (truly idle)."
-  :group 'ai-agent)
+these sessions from `agents-waiting' (truly idle)."
+  :group 'agents)
 
 ;;;; State variables
 
-(defconst ai-agent--home-row-keys '("a" "s" "d" "f" "j" "k" "l" ";")
+(defconst agents--home-row-keys '("a" "s" "d" "f" "j" "k" "l" ";")
   "Home row keys assigned to AI sessions, in allocation order.")
 
-(defconst ai-agent--fallback-keys
+(defconst agents--fallback-keys
   '("g" "h" "q" "r" "t" "y" "u" "i" "o" "p"
     "z" "x" "c" "v" "b" "n" "m")
   "Fallback keys used when home-row keys are exhausted.
 Excludes \"w\" and \"e\", which are reserved for actions in
-`ai-agent--session-switcher'.")
+`agents--session-switcher'.")
 
-(defconst ai-agent--session-key-pool
-  (append ai-agent--home-row-keys ai-agent--fallback-keys)
+(defconst agents--session-key-pool
+  (append agents--home-row-keys agents--fallback-keys)
   "Full pool of keys for AI session assignment, home row first.")
 
-(defvar ai-agent--session-keys (make-hash-table :test 'eq)
+(defvar agents--session-keys (make-hash-table :test 'eq)
   "Map from live AI session buffer to its assigned key.")
 
-(defvar-local ai-agent--display-name-cache nil
+(defvar-local agents--display-name-cache nil
   "Cached display name for the modeline.")
 
-(defvar-local ai-agent--waiting-for-input nil
+(defvar-local agents--waiting-for-input nil
   "Non-nil when this AI session is waiting for user input.
 Set to the time (via `current-time') by the notification handler
 and cleared when input is sent.")
 
-(defvar ai-agent--sync-theme-timer nil
+(defvar agents--sync-theme-timer nil
   "Pending timer for deferred theme sync, or nil.")
 
 ;;;; Forward declarations
@@ -325,162 +325,162 @@ and cleared when input is sent.")
 
 ;;;; Theme sync
 
-(defun ai-agent-sync-theme (&rest _)
+(defun agents-sync-theme (&rest _)
   "Sync registered AI backend themes with Emacs in a deferred timer."
   (interactive)
-  (when ai-agent-sync-theme
-    (unless ai-agent--sync-theme-timer
-      (setq ai-agent--sync-theme-timer
-            (run-at-time 0 nil #'ai-agent--do-sync-theme)))))
+  (when agents-sync-theme
+    (unless agents--sync-theme-timer
+      (setq agents--sync-theme-timer
+            (run-at-time 0 nil #'agents--do-sync-theme)))))
 
-(defun ai-agent-sync-theme-now (&rest _)
+(defun agents-sync-theme-now (&rest _)
   "Sync registered AI backend themes with Emacs immediately.
 This is useful before starting a CLI process, so the process reads
 the current persisted theme at startup."
   (interactive)
-  (when ai-agent-sync-theme
-    (when ai-agent--sync-theme-timer
-      (cancel-timer ai-agent--sync-theme-timer)
-      (setq ai-agent--sync-theme-timer nil))
-    (ai-agent--do-sync-theme t)))
+  (when agents-sync-theme
+    (when agents--sync-theme-timer
+      (cancel-timer agents--sync-theme-timer)
+      (setq agents--sync-theme-timer nil))
+    (agents--do-sync-theme t)))
 
-(defun ai-agent--do-sync-theme (&optional force)
+(defun agents--do-sync-theme (&optional force)
   "Perform the actual AI backend theme sync.
-When FORCE is non-nil, sync even if `ai-agent-sync-theme' is nil."
-  (setq ai-agent--sync-theme-timer nil)
-  (when (or force ai-agent-sync-theme)
-    (let ((theme (ai-agent--theme)))
-      (dolist (entry ai-agent-backends)
+When FORCE is non-nil, sync even if `agents-sync-theme' is nil."
+  (setq agents--sync-theme-timer nil)
+  (when (or force agents-sync-theme)
+    (let ((theme (agents--theme)))
+      (dolist (entry agents-backends)
         (when-let* ((sync-fn (plist-get (cdr entry) :sync-theme)))
           (condition-case err
               (funcall sync-fn theme)
             (error
-             (message "ai-agent: failed to sync %s theme: %S"
+             (message "agents: failed to sync %s theme: %S"
                       (car entry) err))))))))
 
-(defun ai-agent--theme ()
+(defun agents--theme ()
   "Return \"light\" or \"dark\" based on the current frame background mode."
   (if (eq (frame-parameter nil 'background-mode) 'dark) "dark" "light"))
 
 ;;;; Home-row session keys
 
-(defun ai-agent--purge-dead-session-keys ()
+(defun agents--purge-dead-session-keys ()
   "Remove entries for buffers that are no longer live."
   (let (dead)
     (maphash (lambda (buf _) (unless (buffer-live-p buf) (push buf dead)))
-             ai-agent--session-keys)
+             agents--session-keys)
     (dolist (buf dead)
-      (remhash buf ai-agent--session-keys))))
+      (remhash buf agents--session-keys))))
 
-(defun ai-agent--assign-session-key ()
-  "Assign a key from `ai-agent--session-key-pool' to the current buffer."
-  (when (ai-agent--detect-backend (current-buffer))
-    (unless (gethash (current-buffer) ai-agent--session-keys)
-      (ai-agent--purge-dead-session-keys)
-      (let ((used (hash-table-values ai-agent--session-keys)))
+(defun agents--assign-session-key ()
+  "Assign a key from `agents--session-key-pool' to the current buffer."
+  (when (agents--detect-backend (current-buffer))
+    (unless (gethash (current-buffer) agents--session-keys)
+      (agents--purge-dead-session-keys)
+      (let ((used (hash-table-values agents--session-keys)))
         (when-let* ((key (cl-find-if (lambda (k) (not (member k used)))
-                                      ai-agent--session-key-pool)))
-          (puthash (current-buffer) key ai-agent--session-keys))))))
+                                      agents--session-key-pool)))
+          (puthash (current-buffer) key agents--session-keys))))))
 
-(defun ai-agent--release-session-key ()
+(defun agents--release-session-key ()
   "Release the session key for the current buffer."
-  (remhash (current-buffer) ai-agent--session-keys))
+  (remhash (current-buffer) agents--session-keys))
 
-(defun ai-agent--ensure-all-session-keys ()
+(defun agents--ensure-all-session-keys ()
   "Ensure every active AI session buffer has a session key."
-  (ai-agent--purge-dead-session-keys)
-  (dolist (buf (ai-agent--find-all-buffers))
-    (unless (gethash buf ai-agent--session-keys)
-      (let ((used (hash-table-values ai-agent--session-keys)))
+  (agents--purge-dead-session-keys)
+  (dolist (buf (agents--find-all-buffers))
+    (unless (gethash buf agents--session-keys)
+      (let ((used (hash-table-values agents--session-keys)))
         (when-let* ((key (cl-find-if (lambda (k) (not (member k used)))
-                                      ai-agent--session-key-pool)))
-          (puthash buf key ai-agent--session-keys))))))
+                                      agents--session-key-pool)))
+          (puthash buf key agents--session-keys))))))
 
-(defun ai-agent--session-key-index (key)
-  "Return the index of KEY in `ai-agent--session-key-pool'."
-  (or (cl-position key ai-agent--session-key-pool :test #'string=) 99))
+(defun agents--session-key-index (key)
+  "Return the index of KEY in `agents--session-key-pool'."
+  (or (cl-position key agents--session-key-pool :test #'string=) 99))
 
 ;;;; Display names
 
-(defun ai-agent--buffer-session-name (buffer)
+(defun agents--buffer-session-name (buffer)
   "Return the session name for BUFFER."
-  (ai-agent--session-name (buffer-name buffer)))
+  (agents--session-name (buffer-name buffer)))
 
-(defun ai-agent--qualified-session-name (buffer-name)
+(defun agents--qualified-session-name (buffer-name)
   "Return a qualified session name from BUFFER-NAME.
 Includes instance name when present for disambiguation."
-  (let* ((backend (ai-agent--detect-backend (get-buffer buffer-name)))
-         (project (ai-agent--session-name buffer-name))
+  (let* ((backend (agents--detect-backend (get-buffer buffer-name)))
+         (project (agents--session-name buffer-name))
          (instance (when backend
-                     (funcall (ai-agent--backend-get backend :extract-instance-name)
+                     (funcall (agents--backend-get backend :extract-instance-name)
                               buffer-name))))
     (if instance
         (format "%s:%s" project instance)
       project)))
 
-(defun ai-agent-display-name (&optional buffer)
+(defun agents-display-name (&optional buffer)
   "Return the display name for BUFFER.
 Use the project name alone when it is unique among active sessions,
 or \"project:instance\" when multiple sessions share the same
 project.  Appends the backend's display suffix when provided.
 Returns the cached value when available."
   (let ((buf (or buffer (current-buffer))))
-    (or (buffer-local-value 'ai-agent--display-name-cache buf)
-        (ai-agent--compute-display-name buf))))
+    (or (buffer-local-value 'agents--display-name-cache buf)
+        (agents--compute-display-name buf))))
 
-(defun ai-agent--compute-display-name (buffer)
+(defun agents--compute-display-name (buffer)
   "Compute the display name for BUFFER by scanning active sessions."
-  (let* ((name (ai-agent--buffer-session-name buffer))
-         (backend (ai-agent--detect-backend buffer))
+  (let* ((name (agents--buffer-session-name buffer))
+         (backend (agents--detect-backend buffer))
          (all-bufs (if backend
-                       (funcall (ai-agent--backend-get backend :find-all-buffers))
-                     (ai-agent--find-all-buffers)))
+                       (funcall (agents--backend-get backend :find-all-buffers))
+                     (agents--find-all-buffers)))
          (others (cl-remove buffer all-bufs))
-         (sibling-names (mapcar #'ai-agent--buffer-session-name others))
+         (sibling-names (mapcar #'agents--buffer-session-name others))
          (base (if (member name sibling-names)
-                   (ai-agent--qualified-session-name (buffer-name buffer))
+                   (agents--qualified-session-name (buffer-name buffer))
                  name)))
-    (ai-agent--display-name-with-suffix buffer backend base)))
+    (agents--display-name-with-suffix buffer backend base)))
 
-(defun ai-agent--display-name-with-suffix (buffer backend base)
+(defun agents--display-name-with-suffix (buffer backend base)
   "Return BASE plus BACKEND's display suffix for BUFFER, when any."
   (if-let* ((suffix-fn (and backend
-                            (ai-agent--backend-get backend
+                            (agents--backend-get backend
                                                     :display-name-suffix)))
             (suffix (funcall suffix-fn buffer)))
       (format "%s:%s" base suffix)
     base))
 
-(defun ai-agent--refresh-display-names ()
+(defun agents--refresh-display-names ()
   "Recompute and cache display names for all AI session buffers."
-  (dolist (buf (ai-agent--find-all-buffers))
+  (dolist (buf (agents--find-all-buffers))
     (when (buffer-live-p buf)
       (with-current-buffer buf
-        (setq ai-agent--display-name-cache
-              (ai-agent--compute-display-name buf))))))
+        (setq agents--display-name-cache
+              (agents--compute-display-name buf))))))
 
-(defun ai-agent--refresh-display-names-deferred ()
+(defun agents--refresh-display-names-deferred ()
   "Refresh AI display names after the current hook finishes."
-  (run-at-time 0 nil #'ai-agent--refresh-display-names))
+  (run-at-time 0 nil #'agents--refresh-display-names))
 
 ;;;; Session switcher
 
 ;;;###autoload
-(defun ai-agent-start-or-switch ()
+(defun agents-start-or-switch ()
   "Start a new AI session or switch to an existing one.
 If no sessions are active, prompt for which backend to start.
 If sessions exist, show a transient menu with home-row keys."
   (interactive)
-  (let ((all-bufs (ai-agent--find-all-buffers)))
+  (let ((all-bufs (agents--find-all-buffers)))
     (if (null all-bufs)
-        (ai-agent--start-new-session)
-      (ai-agent--ensure-all-session-keys)
-      (transient-setup 'ai-agent--session-switcher))))
+        (agents--start-new-session)
+      (agents--ensure-all-session-keys)
+      (transient-setup 'agents--session-switcher))))
 
-(defun ai-agent--start-new-session ()
+(defun agents--start-new-session ()
   "Start a new session, prompting for backend if multiple are registered."
   (interactive)
-  (let ((backends ai-agent-backends))
+  (let ((backends agents-backends))
     (cond
      ((null backends) (user-error "No AI backends registered"))
      ((= (length backends) 1)
@@ -493,77 +493,77 @@ If sessions exist, show a transient menu with home-row keys."
                             backends))
              (choice (completing-read "Backend: " (mapcar #'car names) nil t))
              (backend-sym (cdr (assoc choice names))))
-        (funcall (ai-agent--backend-get backend-sym :start-new)))))))
+        (funcall (agents--backend-get backend-sym :start-new)))))))
 
-(transient-define-prefix ai-agent--session-switcher ()
+(transient-define-prefix agents--session-switcher ()
   "Switch to an AI session or start a new one."
   [["Actions"
-    ("w" "jump to waiting" ai-agent-jump-to-waiting)
-    ("e" "new session" ai-agent--start-new-session)]
+    ("w" "jump to waiting" agents-jump-to-waiting)
+    ("e" "new session" agents--start-new-session)]
    ["Sessions"
     :class transient-column
-    :setup-children ai-agent--session-switcher-children]])
+    :setup-children agents--session-switcher-children]])
 
-(defun ai-agent--session-switcher-children (_)
+(defun agents--session-switcher-children (_)
   "Build transient suffixes for the session switcher, grouped by account."
-  (let ((groups (ai-agent--group-sessions-by-account)))
+  (let ((groups (agents--group-sessions-by-account)))
     (transient-parse-suffixes
-     'ai-agent--session-switcher
-     (apply #'vector (ai-agent--interleave-group-headers groups)))))
+     'agents--session-switcher
+     (apply #'vector (agents--interleave-group-headers groups)))))
 
-(defun ai-agent--group-sessions-by-account ()
+(defun agents--group-sessions-by-account ()
   "Return an alist of (ACCOUNT . SPECS) sorted by account name.
 Each SPECS is a list of suffix specs sorted by home-row key."
   (let ((groups (make-hash-table :test 'equal)))
     (maphash
      (lambda (buf key)
        (when (buffer-live-p buf)
-         (push (ai-agent--session-suffix-spec buf key)
-               (gethash (ai-agent--session-group-key buf) groups))))
-     ai-agent--session-keys)
-    (ai-agent--hash-to-sorted-alist groups)))
+         (push (agents--session-suffix-spec buf key)
+               (gethash (agents--session-group-key buf) groups))))
+     agents--session-keys)
+    (agents--hash-to-sorted-alist groups)))
 
-(defun ai-agent--session-group-key (buffer)
+(defun agents--session-group-key (buffer)
   "Return the group key for BUFFER in the session switcher.
 Uses the backend's :account function if available, falling back
 to the backend's :label or symbol name."
-  (let ((backend (ai-agent--detect-backend buffer)))
-    (or (when-let* ((account-fn (ai-agent--backend-get backend :account)))
+  (let ((backend (agents--detect-backend buffer)))
+    (or (when-let* ((account-fn (agents--backend-get backend :account)))
           (funcall account-fn buffer))
-        (ai-agent--backend-get backend :label)
+        (agents--backend-get backend :label)
         (and backend (symbol-name backend))
         "Sessions")))
 
-(defun ai-agent--session-suffix-spec (buf key)
+(defun agents--session-suffix-spec (buf key)
   "Build a transient suffix spec for BUF bound to KEY."
-  (let* ((backend (ai-agent--detect-backend buf))
-         (icon (when backend (ai-agent-backend-icon backend)))
-         (name (ai-agent-display-name buf))
+  (let* ((backend (agents--detect-backend buf))
+         (icon (when backend (agents-backend-icon backend)))
+         (name (agents-display-name buf))
          (label (if (and icon (not (string-empty-p icon)))
                     (format "%s %s" icon name) name))
          (waiting (buffer-local-value
-                   'ai-agent--waiting-for-input buf))
+                   'agents--waiting-for-input buf))
          (cmd (make-symbol (format "ai-switch-%s" key)))
          (spec (list key label cmd)))
     (when waiting
       (setq spec (append spec
-                         (list :face (ai-agent--waiting-face buf backend)))))
+                         (list :face (agents--waiting-face buf backend)))))
     (fset cmd (lambda () (interactive) (switch-to-buffer buf)))
     spec))
 
-(defun ai-agent--waiting-face (buffer backend)
+(defun agents--waiting-face (buffer backend)
   "Return the face for BUFFER's waiting indicator.
-Uses `ai-agent-waiting-with-background' when BACKEND reports
-that BUFFER has active background tasks, `ai-agent-waiting'
+Uses `agents-waiting-with-background' when BACKEND reports
+that BUFFER has active background tasks, `agents-waiting'
 otherwise."
   (if (and backend
-           (when-let* ((fn (ai-agent--backend-get
+           (when-let* ((fn (agents--backend-get
                             backend :has-background-tasks-p)))
              (funcall fn buffer)))
-      'ai-agent-waiting-with-background
-    'ai-agent-waiting))
+      'agents-waiting-with-background
+    'agents-waiting))
 
-(defun ai-agent--hash-to-sorted-alist (groups)
+(defun agents--hash-to-sorted-alist (groups)
   "Convert GROUPS hash table to an alist sorted by key.
 Each value's suffix specs are sorted by session-key pool index."
   (let (alist)
@@ -572,30 +572,30 @@ Each value's suffix specs are sorted by session-key pool index."
        (push (cons group-key
                    (sort specs
                          (lambda (a b)
-                           (< (ai-agent--session-key-index (car a))
-                              (ai-agent--session-key-index (car b))))))
+                           (< (agents--session-key-index (car a))
+                              (agents--session-key-index (car b))))))
              alist))
      groups)
     (sort alist (lambda (a b) (string< (car a) (car b))))))
 
-(defun ai-agent--accountless-labels ()
+(defun agents--accountless-labels ()
   "Return labels for backends without an :account function.
 These backends don't support multi-account grouping, so their
 sessions appear without a heading."
   (let (labels)
-    (dolist (entry ai-agent-backends labels)
+    (dolist (entry agents-backends labels)
       (unless (plist-get (cdr entry) :account)
         (when-let* ((label (plist-get (cdr entry) :label)))
           (push label labels))))))
 
-(defun ai-agent--interleave-group-headers (groups)
+(defun agents--interleave-group-headers (groups)
   "Interleave :info headers before each group's suffix specs.
 GROUPS is an alist of (ACCOUNT . SPECS).  When there is only one
 group, no headers are added.  Groups whose key matches an
 accountless backend label appear without a heading."
   (if (<= (length groups) 1)
       (mapcan #'cdr groups)
-    (let ((no-header (ai-agent--accountless-labels)))
+    (let ((no-header (agents--accountless-labels)))
       (mapcan (lambda (entry)
                 (if (member (car entry) no-header)
                     (copy-sequence (cdr entry))
@@ -604,57 +604,57 @@ accountless backend label appear without a heading."
 
 ;;;; Buffer protection
 
-(defun ai-agent-protect-buffer ()
+(defun agents-protect-buffer ()
   "Prompt for confirmation before killing AI session buffers.
 Returns t if the buffer should be killed, nil otherwise."
-  (or (not ai-agent-protect-buffers)
-      (not (ai-agent--detect-backend (current-buffer)))
+  (or (not agents-protect-buffers)
+      (not (agents--detect-backend (current-buffer)))
       (not (process-live-p (get-buffer-process (current-buffer))))
       (yes-or-no-p "Kill AI session buffer? ")))
 
 ;;;; Session exit
 
-(defun ai-agent-kill-session-buffer ()
+(defun agents-kill-session-buffer ()
   "Kill the current AI session buffer, bypassing confirmation.
 Terminates the CLI process if still running, then kills the
 buffer.  Signals an error unless the current buffer is an AI
 session."
   (interactive)
-  (unless (ai-agent--detect-backend (current-buffer))
+  (unless (agents--detect-backend (current-buffer))
     (user-error "Not in an AI session buffer"))
-  (ai-agent--force-kill-buffer (current-buffer)))
+  (agents--force-kill-buffer (current-buffer)))
 
-(defun ai-agent--force-kill-buffer (buffer)
+(defun agents--force-kill-buffer (buffer)
   "Terminate the process in BUFFER and kill it without confirmation."
   (when-let* ((proc (get-buffer-process buffer)))
     (set-process-query-on-exit-flag proc nil)
     (set-process-sentinel proc #'ignore)
     (delete-process proc))
   (let ((kill-buffer-query-functions
-         (remq 'ai-agent-protect-buffer kill-buffer-query-functions)))
+         (remq 'agents-protect-buffer kill-buffer-query-functions)))
     (kill-buffer buffer)))
 
 ;;;; Alert and notification system
 
-(defun ai-agent-notify (title message)
+(defun agents-notify (title message)
   "Show notification with TITLE and MESSAGE.
-When `ai-agent-alert-on-ready' is non-nil, dispatch to the
+When `agents-alert-on-ready' is non-nil, dispatch to the
 configured alert style."
   (message "%s: %s" title message)
-  (when ai-agent-alert-on-ready
-    (ai-agent--alert-visual title message)
-    (ai-agent--alert-sound)))
+  (when agents-alert-on-ready
+    (agents--alert-visual title message)
+    (agents--alert-sound)))
 
-(defun ai-agent--alert-visual (title message)
+(defun agents--alert-visual (title message)
   "Show a visual notification with TITLE and MESSAGE."
-  (when (memq ai-agent-alert-style '(visual both))
+  (when (memq agents-alert-style '(visual both))
     (when (and (require 'alert nil t) (fboundp 'alert))
       (alert message :title title))))
 
-(defun ai-agent--alert-sound ()
+(defun agents--alert-sound ()
   "Play the configured alert sound."
-  (when (memq ai-agent-alert-style '(sound both))
-    (when-let* ((sound ai-agent-alert-sound))
+  (when (memq agents-alert-style '(sound both))
+    (when-let* ((sound agents-alert-sound))
       (if (not (file-exists-p sound))
           (message "AI alert sound file not found: %s" sound)
         (cond
@@ -664,29 +664,29 @@ configured alert style."
             (error
              (message "AI alert sound failed: %s"
                       (error-message-string err)))))
-         ((and ai-agent-alert-sound-player
-               (executable-find ai-agent-alert-sound-player))
-          (start-process "ai-agent-alert-sound" nil
-                         ai-agent-alert-sound-player sound))
-         (ai-agent-alert-sound-player
+         ((and agents-alert-sound-player
+               (executable-find agents-alert-sound-player))
+          (start-process "agents-alert-sound" nil
+                         agents-alert-sound-player sound))
+         (agents-alert-sound-player
           (message "AI alert sound player not found: %s"
-                   ai-agent-alert-sound-player))
+                   agents-alert-sound-player))
          (t
-          (message "No Emacs sound support or `ai-agent-alert-sound-player'")))))))
+          (message "No Emacs sound support or `agents-alert-sound-player'")))))))
 
-(defun ai-agent--clear-waiting-for-input (&rest _)
+(defun agents--clear-waiting-for-input (&rest _)
   "Clear the waiting-for-input flag in the current buffer."
-  (when (bound-and-true-p ai-agent--waiting-for-input)
-    (setq ai-agent--waiting-for-input nil)))
+  (when (bound-and-true-p agents--waiting-for-input)
+    (setq agents--waiting-for-input nil)))
 
 ;;;###autoload
-(defun ai-agent-jump-to-waiting ()
+(defun agents-jump-to-waiting ()
   "Switch to the AI session that most recently started waiting for input."
   (interactive)
   (let (best-buf best-time)
-    (dolist (buf (ai-agent--find-all-buffers))
+    (dolist (buf (agents--find-all-buffers))
       (when (buffer-live-p buf)
-        (let ((ts (buffer-local-value 'ai-agent--waiting-for-input buf)))
+        (let ((ts (buffer-local-value 'agents--waiting-for-input buf)))
           (when (and ts (or (null best-time) (time-less-p best-time ts)))
             (setq best-buf buf best-time ts)))))
     (if best-buf
@@ -694,20 +694,20 @@ configured alert style."
       (message "No sessions waiting for input"))))
 
 ;;;###autoload
-(defun ai-agent-toggle-alert ()
+(defun agents-toggle-alert ()
   "Toggle OS notifications for AI sessions."
   (interactive)
-  (setq ai-agent-alert-on-ready (not ai-agent-alert-on-ready))
+  (setq agents-alert-on-ready (not agents-alert-on-ready))
   (message "AI alert notifications %s"
-           (if ai-agent-alert-on-ready "enabled" "disabled")))
+           (if agents-alert-on-ready "enabled" "disabled")))
 
-(defun ai-agent-alert-indicator ()
+(defun agents-alert-indicator ()
   "Return a bell icon reflecting the current alert state."
-  (if ai-agent-alert-on-ready "🔔" "🔕"))
+  (if agents-alert-on-ready "🔔" "🔕"))
 
 ;;;; Scroll to bottom
 
-(defun ai-agent--scroll-to-bottom (buffer)
+(defun agents--scroll-to-bottom (buffer)
   "Scroll BUFFER and its windows to the terminal cursor."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
@@ -722,18 +722,18 @@ configured alert style."
 
 ;;;; Terminal rendering fix
 
-(defun ai-agent-fix-rendering ()
+(defun agents-fix-rendering ()
   "Send SIGWINCH to fix terminal rendering after startup."
   (interactive)
   (when-let* ((proc (get-buffer-process (current-buffer))))
-    (ai-agent--send-sigwinch-after-delay (current-buffer))))
+    (agents--send-sigwinch-after-delay (current-buffer))))
 
-(defun ai-agent--send-sigwinch-after-delay (buffer)
+(defun agents--send-sigwinch-after-delay (buffer)
   "Send SIGWINCH to the process in BUFFER after a short delay."
-  (run-at-time ai-agent-sigwinch-delay nil
-               #'ai-agent--send-sigwinch buffer))
+  (run-at-time agents-sigwinch-delay nil
+               #'agents--send-sigwinch buffer))
 
-(defun ai-agent--send-sigwinch (buffer)
+(defun agents--send-sigwinch (buffer)
   "Send SIGWINCH to the process in BUFFER."
   (when (buffer-live-p buffer)
     (when-let* ((proc (get-buffer-process buffer)))
@@ -741,7 +741,7 @@ configured alert style."
 
 ;;;; Scrollback truncation fix
 
-(defun ai-agent-disable-scrollback-truncation ()
+(defun agents-disable-scrollback-truncation ()
   "Disable eat's default scrollback limit for the current buffer.
 Without this, eat truncates terminal output to
 `eat-term-scrollback-size' lines, causing older AI session output
@@ -754,7 +754,7 @@ to vanish."
 
 ;;;; Snippet insertion
 
-(defun ai-agent--expand-snippet-to-text (template)
+(defun agents--expand-snippet-to-text (template)
   "Expand yasnippet TEMPLATE to plain text in a temporary buffer."
   (with-temp-buffer
     (yas-minor-mode 1)
@@ -765,7 +765,7 @@ to vanish."
     (mapc #'yas--commit-snippet (yas-active-snippets))
     (buffer-string)))
 
-(defun ai-agent--consult-yasnippet (orig-fn arg)
+(defun agents--consult-yasnippet (orig-fn arg)
   "In eat-mode buffers, send snippet content via the terminal.
 ORIG-FN is `consult-yasnippet'; ARG is the prefix argument."
   (if (not (derived-mode-p 'eat-mode))
@@ -786,14 +786,14 @@ ORIG-FN is `consult-yasnippet'; ARG is the prefix argument."
              :group 'consult--prefix-group
              :category 'yasnippet)))
       (when template
-        (let* ((expanded (ai-agent--expand-snippet-to-text template))
+        (let* ((expanded (agents--expand-snippet-to-text template))
                (text (replace-regexp-in-string "\n" "\e\r" expanded)))
           (eat-term-send-string eat-terminal text))))))
 
 (with-eval-after-load 'consult-yasnippet
-  (advice-add 'consult-yasnippet :around #'ai-agent--consult-yasnippet))
+  (advice-add 'consult-yasnippet :around #'agents--consult-yasnippet))
 
-(defun ai-agent--try-expand-snippet-at-prompt ()
+(defun agents--try-expand-snippet-at-prompt ()
   "Try to expand a yasnippet key at the eat terminal prompt.
 Search backward from `point-max' for a prompt marker, extract the
 user's input, and check whether it ends with a snippet key.  If
@@ -825,65 +825,65 @@ if a snippet was expanded."
           (when best-match
             (eat-term-send-string eat-terminal
                                   (make-string (length best-key) ?\x7f))
-            (let* ((expanded (ai-agent--expand-snippet-to-text best-match))
+            (let* ((expanded (agents--expand-snippet-to-text best-match))
                    (text (replace-regexp-in-string "\n" "\e\r" expanded)))
               (eat-term-send-string eat-terminal text))
             t))))))
 
-(defun ai-agent-snippet-tab ()
+(defun agents-snippet-tab ()
   "Try snippet expansion at prompt, otherwise send TAB to eat."
   (interactive)
-  (unless (ai-agent--try-expand-snippet-at-prompt)
+  (unless (agents--try-expand-snippet-at-prompt)
     (eat-self-input 1 ?\t)))
 
-(defvar ai-agent--snippet-keys-mode-map
+(defvar agents--snippet-keys-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "TAB") #'ai-agent-snippet-tab)
-    (define-key map [tab] #'ai-agent-snippet-tab)
+    (define-key map (kbd "TAB") #'agents-snippet-tab)
+    (define-key map [tab] #'agents-snippet-tab)
     map)
-  "Keymap for `ai-agent--snippet-keys-mode'.")
+  "Keymap for `agents--snippet-keys-mode'.")
 
-(define-minor-mode ai-agent--snippet-keys-mode
+(define-minor-mode agents--snippet-keys-mode
   "Minor mode providing yasnippet TAB expansion in AI session buffers."
-  :keymap ai-agent--snippet-keys-mode-map)
+  :keymap agents--snippet-keys-mode-map)
 
-(defun ai-agent-setup-snippet-keys ()
+(defun agents-setup-snippet-keys ()
   "Enable yasnippet TAB expansion in the current AI session buffer."
-  (when (and (ai-agent--detect-backend (current-buffer))
+  (when (and (agents--detect-backend (current-buffer))
              (bound-and-true-p eat-terminal)
              (require 'yasnippet nil t))
     (yas-minor-mode 1)
-    (ai-agent--snippet-keys-mode 1)))
+    (agents--snippet-keys-mode 1)))
 
 ;;;; Escape key fix
 
-(defun ai-agent--send-escape-in-current-buffer (orig-fn)
+(defun agents--send-escape-in-current-buffer (orig-fn)
   "When already in an AI buffer, send escape directly without prompting.
 ORIG-FN is the original escape command."
-  (if (ai-agent--detect-backend (current-buffer))
+  (if (agents--detect-backend (current-buffer))
       (when (bound-and-true-p eat-terminal)
         (eat-term-send-string eat-terminal (kbd "ESC")))
     (funcall orig-fn)))
 
 ;;;; Command dispatchers
 
-(defun ai-agent--resolve-backend ()
+(defun agents--resolve-backend ()
   "Return the backend for the current context.
 If in a session buffer, use that backend.  If only one backend is
 registered, use it.  Otherwise, prompt."
-  (or (ai-agent--detect-backend)
-      (if (= (length ai-agent-backends) 1)
-          (caar ai-agent-backends)
+  (or (agents--detect-backend)
+      (if (= (length agents-backends) 1)
+          (caar agents-backends)
         (let* ((entries (mapcar (lambda (e)
                                   (cons (or (plist-get (cdr e) :label)
                                             (symbol-name (car e)))
                                         (car e)))
-                                ai-agent-backends))
+                                agents-backends))
                (labels (mapcar #'car entries))
                (affixate (lambda (cands)
                            (mapcar (lambda (c)
                                      (let* ((sym (cdr (assoc c entries)))
-                                            (icon (ai-agent-backend-icon sym)))
+                                            (icon (agents-backend-icon sym)))
                                        (list c
                                              (if (string-empty-p icon) ""
                                                (concat icon " "))
@@ -898,68 +898,68 @@ registered, use it.  Otherwise, prompt."
                         nil t)))
           (cdr (assoc choice entries))))))
 
-(defun ai-agent--dispatch (key)
+(defun agents--dispatch (key)
   "Dispatch command KEY to the appropriate backend.
 Uses `call-interactively' so the target command's interactive spec
 runs and prompts for arguments as needed."
-  (let* ((backend (ai-agent--resolve-backend))
-         (fn (ai-agent--backend-get backend key)))
+  (let* ((backend (agents--resolve-backend))
+         (fn (agents--backend-get backend key)))
     (if fn
         (call-interactively fn)
       (user-error "Backend `%s' does not support `%s'" backend key))))
 
-(defun ai-agent--run-before-exit-functions (backend buffer)
+(defun agents--run-before-exit-functions (backend buffer)
   "Return non-nil if BACKEND session BUFFER should exit."
   (catch 'abort
-    (dolist (fn ai-agent-before-exit-functions t)
+    (dolist (fn agents-before-exit-functions t)
       (unless (funcall fn backend buffer)
         (throw 'abort nil)))))
 
-(defun ai-agent-run-skill-before-exit (backend buffer)
-  "Run `ai-agent-before-exit-skill-name' before exiting BUFFER.
-BACKEND is the resolved `ai-agent' backend.  Return nil when a
+(defun agents-run-skill-before-exit (backend buffer)
+  "Run `agents-before-exit-skill-name' before exiting BUFFER.
+BACKEND is the resolved `agents' backend.  Return nil when a
 skill command was submitted and exit should be delayed."
   (with-current-buffer buffer
-    (if (or ai-agent--before-exit-skill-sent
-            (not (ai-agent--before-exit-skill-configured-p))
-            (not (ai-agent--before-exit-skill-directory-p backend buffer)))
+    (if (or agents--before-exit-skill-sent
+            (not (agents--before-exit-skill-configured-p))
+            (not (agents--before-exit-skill-directory-p backend buffer)))
         t
-      (let ((command (ai-agent--before-exit-skill-command backend))
-            (send-command-fn (ai-agent--backend-get backend :send-command)))
+      (let ((command (agents--before-exit-skill-command backend))
+            (send-command-fn (agents--backend-get backend :send-command)))
         (if (not (and command send-command-fn))
             t
-          (setq-local ai-agent--before-exit-skill-sent t)
+          (setq-local agents--before-exit-skill-sent t)
           (funcall send-command-fn command buffer)
-          (when-let* ((send-return-fn (ai-agent--backend-get backend :send-return)))
+          (when-let* ((send-return-fn (agents--backend-get backend :send-return)))
             (funcall send-return-fn buffer))
-          (message "Started %s; run ai-agent-exit again to close this session."
+          (message "Started %s; run agents-exit again to close this session."
                    command)
           nil)))))
 
-(defun ai-agent--before-exit-skill-configured-p ()
+(defun agents--before-exit-skill-configured-p ()
   "Return non-nil when a before-exit skill is configured."
-  (and ai-agent-before-exit-skill-name
-       (not (string-empty-p ai-agent-before-exit-skill-name))))
+  (and agents-before-exit-skill-name
+       (not (string-empty-p agents-before-exit-skill-name))))
 
-(defun ai-agent--before-exit-skill-directory-p (backend buffer)
+(defun agents--before-exit-skill-directory-p (backend buffer)
   "Return non-nil if BACKEND session BUFFER is in a configured directory."
-  (when-let* ((directory (ai-agent--buffer-directory backend buffer)))
+  (when-let* ((directory (agents--buffer-directory backend buffer)))
     (cl-some (lambda (candidate)
                (file-in-directory-p directory (file-truename candidate)))
-             ai-agent-before-exit-skill-directories)))
+             agents-before-exit-skill-directories)))
 
-(defun ai-agent--buffer-directory (backend buffer)
+(defun agents--buffer-directory (backend buffer)
   "Return the normalized directory for BACKEND session BUFFER."
-  (when-let* ((directory-fn (ai-agent--backend-get backend :directory))
+  (when-let* ((directory-fn (agents--backend-get backend :directory))
               (directory (funcall directory-fn buffer)))
     (file-name-as-directory (file-truename directory))))
 
-(defun ai-agent--before-exit-skill-command (backend)
+(defun agents--before-exit-skill-command (backend)
   "Return the interactive before-exit skill command for BACKEND."
-  (when-let* ((prefix (alist-get backend ai-agent-skill-command-prefix-alist)))
-    (concat prefix ai-agent-before-exit-skill-name)))
+  (when-let* ((prefix (alist-get backend agents-skill-command-prefix-alist)))
+    (concat prefix agents-before-exit-skill-name)))
 
-(defun ai-agent--skill-argument-candidates (skill)
+(defun agents--skill-argument-candidates (skill)
   "Return completion candidates for SKILL's arguments.
 SKILL is a plist.  If the skill has an :argument-source glob,
 resolve it relative to the skill's directory and return file stems.
@@ -972,7 +972,7 @@ If it has :argument-choices, return those.  Otherwise return nil."
                   (file-expand-wildcards pattern))))
       (plist-get skill :argument-choices)))
 
-(defun ai-agent-parse-skill-frontmatter (file)
+(defun agents-parse-skill-frontmatter (file)
   "Parse skill frontmatter from FILE and return a plist.
 Recognizes :name, :description, :argument-hint, :argument-source,
 :argument-choices, :argument-default, :argument-multiple,
@@ -991,21 +991,21 @@ Recognizes :name, :description, :argument-hint, :argument-source,
                          "\n" t))
             (when (string-match "^\\([a-z0-9_-]+\\): *\\(.*\\)$" line)
               (setq result
-                    (ai-agent--put-skill-frontmatter-field
+                    (agents--put-skill-frontmatter-field
                      result
                      (match-string 1 line)
-                     (ai-agent--clean-skill-frontmatter-value
+                     (agents--clean-skill-frontmatter-value
                       (match-string 2 line)))))))
         result))))
 
-(defun ai-agent--clean-skill-frontmatter-value (value)
+(defun agents--clean-skill-frontmatter-value (value)
   "Return normalized frontmatter VALUE."
   (let ((val (string-trim value)))
     (if (string-match "^[\"']\\(.*\\)[\"']$" val)
         (match-string 1 val)
       val)))
 
-(defun ai-agent--put-skill-frontmatter-field (plist key value)
+(defun agents--put-skill-frontmatter-field (plist key value)
   "Return PLIST with frontmatter KEY set to VALUE when recognized."
   (pcase key
     ("name" (plist-put plist :name value))
@@ -1025,12 +1025,12 @@ Recognizes :name, :description, :argument-hint, :argument-source,
     ("model" (plist-put plist :model value))
     (_ plist)))
 
-(defun ai-agent--discover-all-skills ()
+(defun agents--discover-all-skills ()
   "Discover skills from all registered backends.
 Calls each backend's `:discover-skills' function and returns a
 combined list of skill plists, each augmented with `:backend'."
   (let (all-skills)
-    (dolist (entry ai-agent-backends)
+    (dolist (entry agents-backends)
       (when-let* ((discover-fn (plist-get (cdr entry) :discover-skills)))
         (dolist (skill (funcall discover-fn))
           (unless (and (plist-member skill :user-invocable)
@@ -1040,44 +1040,44 @@ combined list of skill plists, each augmented with `:backend'."
     (sort all-skills (lambda (a b)
                        (string< (plist-get a :name) (plist-get b :name))))))
 
-(defun ai-agent--skill-candidate (skill)
+(defun agents--skill-candidate (skill)
   "Return a unique completion candidate for SKILL."
   (let* ((backend (plist-get skill :backend))
-         (label (or (ai-agent--backend-get backend :label)
+         (label (or (agents--backend-get backend :label)
                     (symbol-name backend))))
     (propertize (format "%s [%s]" (plist-get skill :name) label)
-                'ai-agent-skill skill)))
+                'agents-skill skill)))
 
-(defun ai-agent--skill-candidates (skills)
+(defun agents--skill-candidates (skills)
   "Return completion candidates for SKILLS with embedded skill plists."
-  (mapcar #'ai-agent--skill-candidate skills))
+  (mapcar #'agents--skill-candidate skills))
 
-(defun ai-agent--skill-from-candidate (candidate candidates)
+(defun agents--skill-from-candidate (candidate candidates)
   "Return the skill plist for CANDIDATE from CANDIDATES."
-  (or (get-text-property 0 'ai-agent-skill candidate)
-      (get-text-property 0 'ai-agent-skill
+  (or (get-text-property 0 'agents-skill candidate)
+      (get-text-property 0 'agents-skill
                          (cl-find candidate candidates :test #'string=))))
 
 ;;;###autoload
-(defun ai-agent-handoff ()
+(defun agents-handoff ()
   "Close the current session and start a new one with the handoff prompt.
 Dispatches to the appropriate backend."
   (interactive)
-  (ai-agent--dispatch :handoff))
+  (agents--dispatch :handoff))
 
 ;;;###autoload
-(defun ai-agent-run-skill ()
+(defun agents-run-skill ()
   "Discover and run a skill from any registered backend.
 Shows an aggregated list of all skills with an indication of
 the backend next to each."
   (interactive)
-  (let* ((skills (ai-agent--discover-all-skills))
+  (let* ((skills (agents--discover-all-skills))
          (_ (unless skills (user-error "No user-invocable skills found")))
-         (skill-candidates (ai-agent--skill-candidates skills))
+         (skill-candidates (agents--skill-candidates skills))
          (max-cand-len (apply #'max (mapcar #'length skill-candidates)))
          (annotate
           (lambda (cand)
-            (when-let* ((skill (ai-agent--skill-from-candidate
+            (when-let* ((skill (agents--skill-from-candidate
                                 cand skill-candidates)))
               (let ((desc (or (plist-get skill :description) "")))
                 (concat (make-string (- (+ max-cand-len 2) (length cand)) ?\s)
@@ -1090,11 +1090,11 @@ the backend next to each."
                          (complete-with-action
                           action skill-candidates str pred)))
                      nil t))
-         (skill (ai-agent--skill-from-candidate candidate skill-candidates))
+         (skill (agents--skill-from-candidate candidate skill-candidates))
          (backend (plist-get skill :backend))
          ;; Prompt for arguments using skill metadata
          (hint (plist-get skill :argument-hint))
-         (candidates (ai-agent--skill-argument-candidates skill))
+         (candidates (agents--skill-argument-candidates skill))
          (default (plist-get skill :argument-default))
          (multiple-p (plist-get skill :argument-multiple))
          (args (cond
@@ -1117,27 +1117,27 @@ the backend next to each."
                 (hint
                  (let ((input (read-string (format "Arguments %s: " hint))))
                    (unless (string-empty-p input) input)))))
-         (run-fn (ai-agent--backend-get backend :run-skill)))
+         (run-fn (agents--backend-get backend :run-skill)))
     (unless run-fn
       (user-error "Backend `%s' does not support `:run-skill'" backend))
     (funcall run-fn (plist-get skill :name) args)))
 
 ;;;###autoload
 ;;;###autoload
-(defun ai-agent-post-push-ci (&optional commit)
+(defun agents-post-push-ci (&optional commit)
   "Run the post-push CI closeout skill for COMMIT.
 When COMMIT is nil, use the current Git HEAD.  The selected backend
 must support `:run-skill'."
   (interactive)
-  (let* ((backend (ai-agent--resolve-backend))
-         (run-fn (ai-agent--backend-get backend :run-skill))
-         (sha (or commit (ai-agent--git-head)))
+  (let* ((backend (agents--resolve-backend))
+         (run-fn (agents--backend-get backend :run-skill))
+         (sha (or commit (agents--git-head)))
          (args (format "--no-push --commit %s" sha)))
     (unless run-fn
       (user-error "Backend `%s' does not support `:run-skill'" backend))
     (funcall run-fn "post-push-ci" args)))
 
-(defun ai-agent--git-head ()
+(defun agents--git-head ()
   "Return the current Git HEAD SHA."
   (with-temp-buffer
     (unless (zerop (process-file "git" nil t nil "rev-parse" "HEAD"))
@@ -1145,24 +1145,24 @@ must support `:run-skill'."
     (string-trim (buffer-string))))
 
 ;;;###autoload
-(defun ai-agent-audit-project ()
+(defun agents-audit-project ()
   "Run a comprehensive project audit via the appropriate backend."
   (interactive)
-  (ai-agent--dispatch :audit-project))
+  (agents--dispatch :audit-project))
 
 ;;;###autoload
-(defun ai-agent-debug-backtrace ()
+(defun agents-debug-backtrace ()
   "Analyze a backtrace and start a session in the culprit package."
   (interactive)
-  (ai-agent--dispatch :debug-backtrace))
+  (agents--dispatch :debug-backtrace))
 
 ;;;###autoload
-(defun ai-agent-save-backtrace ()
+(defun agents-save-backtrace ()
   "Save the current Emacs backtrace and return its file path."
   (interactive)
   (unless (string-match-p "\\*Backtrace\\*" (buffer-name))
     (user-error "Not in a backtrace buffer"))
-  (let ((file (expand-file-name ai-agent-backtrace-file))
+  (let ((file (expand-file-name agents-backtrace-file))
         (contents (buffer-string)))
     (make-directory (file-name-directory file) t)
     (with-temp-buffer
@@ -1173,7 +1173,7 @@ must support `:run-skill'."
     (message "Backtrace saved to %s" (abbreviate-file-name file))
     file))
 
-(defun ai-agent--package-source-directory (package)
+(defun agents--package-source-directory (package)
   "Return a source directory for PACKAGE, or nil."
   (or (when-let* ((entry (and (fboundp 'elpaca-get) (elpaca-get package)))
                   ((fboundp 'elpaca-source-dir)))
@@ -1184,106 +1184,106 @@ must support `:run-skill'."
           (error nil)))))
 
 ;;;###autoload
-(defun ai-agent-setup-kill-on-exit ()
+(defun agents-setup-kill-on-exit ()
   "Arrange for the buffer to be killed when the session process exits."
   (interactive)
-  (ai-agent--dispatch :setup-kill-on-exit))
+  (agents--dispatch :setup-kill-on-exit))
 
 ;;;###autoload
-(defun ai-agent-exit ()
+(defun agents-exit ()
   "Exit the current AI session and kill its buffer.
 Dispatches to the backend's `:exit' handler, which should
 terminate the CLI process and kill the buffer."
   (interactive)
-  (let* ((backend (ai-agent--resolve-backend))
+  (let* ((backend (agents--resolve-backend))
          (buffer (current-buffer))
-         (fn (ai-agent--backend-get backend :exit)))
+         (fn (agents--backend-get backend :exit)))
     (unless fn
       (user-error "Backend `%s' does not support `:exit'" backend))
-    (when (ai-agent--run-before-exit-functions backend buffer)
+    (when (agents--run-before-exit-functions backend buffer)
       (call-interactively fn))))
 
 ;;;###autoload
-(defun ai-agent-restart ()
+(defun agents-restart ()
   "Kill the current AI session and resume it in place.
 Useful when a setting change requires relaunching the CLI.
 Dispatches to the backend's `:restart' handler."
   (interactive)
-  (ai-agent--dispatch :restart))
+  (agents--dispatch :restart))
 
 ;;;; Transient boolean infix class
 
 (eval-and-compile
-  (defclass ai-agent--boolean-variable (transient-lisp-variable)
+  (defclass agents--boolean-variable (transient-lisp-variable)
     ()
     "A `transient-lisp-variable' that toggles a boolean on each press."))
 
-(cl-defmethod transient-infix-read ((obj ai-agent--boolean-variable))
+(cl-defmethod transient-infix-read ((obj agents--boolean-variable))
   "Toggle the boolean value of OBJ."
   (not (oref obj value)))
 
 ;;;; Transient menu
 
-;;;###autoload (autoload 'ai-agent-menu "ai-agent" nil t)
-(transient-define-prefix ai-agent-menu ()
+;;;###autoload (autoload 'agents-menu "agents" nil t)
+(transient-define-prefix agents-menu ()
   "Dispatch AI session commands."
   [["Sessions"
-    ("e" "start or switch" ai-agent-start-or-switch)
-    ("w" "jump to waiting" ai-agent-jump-to-waiting)
-    ("h" "handoff" ai-agent-handoff)
-    ("x" "exit session" ai-agent-exit)
-    ("r" "restart" ai-agent-restart)
+    ("e" "start or switch" agents-start-or-switch)
+    ("w" "jump to waiting" agents-jump-to-waiting)
+    ("h" "handoff" agents-handoff)
+    ("x" "exit session" agents-exit)
+    ("r" "restart" agents-restart)
     ""
     "Buffer"
-    ("K" "setup kill on exit" ai-agent-setup-kill-on-exit)
-    ("f" "fix rendering" ai-agent-fix-rendering)
-    ("S" "disable scrollback" ai-agent-disable-scrollback-truncation)]
+    ("K" "setup kill on exit" agents-setup-kill-on-exit)
+    ("f" "fix rendering" agents-fix-rendering)
+    ("S" "disable scrollback" agents-disable-scrollback-truncation)]
    ["Tools"
-    ("s" "run skill" ai-agent-run-skill)
-    ("c" "post-push CI" ai-agent-post-push-ci)
-    ("a" "audit project" ai-agent-audit-project)
-    ("d" "debug backtrace" ai-agent-debug-backtrace)
+    ("s" "run skill" agents-run-skill)
+    ("c" "post-push CI" agents-post-push-ci)
+    ("a" "audit project" agents-audit-project)
+    ("d" "debug backtrace" agents-debug-backtrace)
     ""
     "Alerts"
-    ("T" "toggle alert" ai-agent-toggle-alert)]
+    ("T" "toggle alert" agents-toggle-alert)]
    ["Options"
-    ("-A" ai-agent--infix-alert-on-ready)
-    ("-p" ai-agent--infix-protect-buffers)
-    ("-t" ai-agent--infix-sync-theme)]])
+    ("-A" agents--infix-alert-on-ready)
+    ("-p" agents--infix-protect-buffers)
+    ("-t" agents--infix-sync-theme)]])
 
-(transient-define-infix ai-agent--infix-alert-on-ready ()
-  "Toggle `ai-agent-alert-on-ready'."
-  :class 'ai-agent--boolean-variable
-  :variable 'ai-agent-alert-on-ready
+(transient-define-infix agents--infix-alert-on-ready ()
+  "Toggle `agents-alert-on-ready'."
+  :class 'agents--boolean-variable
+  :variable 'agents-alert-on-ready
   :description "alert on ready")
 
-(transient-define-infix ai-agent--infix-protect-buffers ()
-  "Toggle `ai-agent-protect-buffers'."
-  :class 'ai-agent--boolean-variable
-  :variable 'ai-agent-protect-buffers
+(transient-define-infix agents--infix-protect-buffers ()
+  "Toggle `agents-protect-buffers'."
+  :class 'agents--boolean-variable
+  :variable 'agents-protect-buffers
   :description "protect buffers")
 
 (eval-and-compile
-  (defclass ai-agent--sync-theme-variable (ai-agent--boolean-variable)
+  (defclass agents--sync-theme-variable (agents--boolean-variable)
     ()
     "A boolean infix that syncs themes when enabled."))
 
 (cl-defmethod transient-infix-set :after
-  ((obj ai-agent--sync-theme-variable) _value)
-  "Sync themes after OBJ enables `ai-agent-sync-theme'."
+  ((obj agents--sync-theme-variable) _value)
+  "Sync themes after OBJ enables `agents-sync-theme'."
   (when (symbol-value (oref obj variable))
-    (ai-agent-sync-theme-now)))
+    (agents-sync-theme-now)))
 
-(transient-define-infix ai-agent--infix-sync-theme ()
-  "Toggle `ai-agent-sync-theme'."
-  :class 'ai-agent--sync-theme-variable
-  :variable 'ai-agent-sync-theme
+(transient-define-infix agents--infix-sync-theme ()
+  "Toggle `agents-sync-theme'."
+  :class 'agents--sync-theme-variable
+  :variable 'agents-sync-theme
   :description "sync theme")
 
-(add-hook 'enable-theme-functions #'ai-agent-sync-theme)
-(add-hook 'ai-agent-before-exit-functions #'ai-agent-run-skill-before-exit)
+(add-hook 'enable-theme-functions #'agents-sync-theme)
+(add-hook 'agents-before-exit-functions #'agents-run-skill-before-exit)
 
 ;;;; Provide
 
-(provide 'ai-agent)
-;;; ai-agent.el ends here
+(provide 'agents)
+;;; agents.el ends here

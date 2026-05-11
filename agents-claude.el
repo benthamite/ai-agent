@@ -1,11 +1,11 @@
-;;; ai-agent-claude.el --- Extensions for claude-code -*- lexical-binding: t -*-
+;;; agents-claude.el --- Extensions for claude-code -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026
 
 ;; Author: Pablo Stafforini
-;; URL: https://github.com/benthamite/ai-agent
+;; URL: https://github.com/benthamite/agents
 ;; Version: 0.1
-;; Package-Requires: ((claude-code "0.1") (consult "1.0") (ai-agent "0.1"))
+;; Package-Requires: ((claude-code "0.1") (consult "1.0") (agents "0.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -29,127 +29,127 @@
 ;;; Code:
 
 (require 'claude-code)
-(eval-and-compile (require 'ai-agent))
+(eval-and-compile (require 'agents))
 (require 'consult)
 (require 'subr-x)
 (require 'transient)
 
 ;;;; Variables
 
-(defgroup ai-agent-claude ()
+(defgroup agents-claude ()
   "Extensions for `claude-code'."
   :group 'claude-code)
 
-(defcustom ai-agent-claude-programmatic-skill-directories
+(defcustom agents-claude-programmatic-skill-directories
   (list (expand-file-name "~/.claude/programmatic-skills"))
-  "Directories to scan for skills run only by `ai-agent-run-skill'.
+  "Directories to scan for skills run only by `agents-run-skill'.
 These directories are not loaded by ordinary Claude Code sessions."
   :type '(repeat directory)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-warn-kill-with-branches t
+(defcustom agents-claude-warn-kill-with-branches t
   "When non-nil, warn before killing a session that has branches.
 If the session being killed is the root of a branch tree with
 more than one member, a second confirmation prompt is shown after
 the standard kill-protection prompt."
   :type 'boolean
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-fork-worktree-directory
+(defcustom agents-claude-fork-worktree-directory
   (expand-file-name "claude-worktrees"
                     (or (getenv "XDG_CACHE_HOME")
                         (expand-file-name ".cache" "~")))
-  "Base directory for git worktrees created by `ai-agent-claude-create-branch'.
+  "Base directory for git worktrees created by `agents-claude-create-branch'.
 Each forked session gets a sibling worktree under this directory,
 isolating its filesystem and git state from the parent session.
 Defaults to a cache location to avoid cloud sync
 interference with concurrent git operations."
   :type 'directory
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-log-directory
-  (expand-file-name "ai-agent/claude-logs/" user-emacs-directory)
+(defcustom agents-claude-log-directory
+  (expand-file-name "agents/claude-logs/" user-emacs-directory)
   "Directory where Claude conversation logs are saved."
   :type 'directory
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-status-interval 5
+(defcustom agents-claude-status-interval 5
   "Interval in seconds between status file polls."
   :type 'integer
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-usage-interval 300
+(defcustom agents-claude-usage-interval 300
   "Base interval in seconds between usage API polls.
 Fetches 5-hour session and 7-day weekly utilization from the API.
 On HTTP 429 responses the interval doubles, up to
-`ai-agent-claude-usage-max-interval'; it resets on success."
+`agents-claude-usage-max-interval'; it resets on success."
   :type 'integer
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-usage-max-interval 900
+(defcustom agents-claude-usage-max-interval 900
   "Maximum polling interval in seconds after repeated 429 backoffs."
   :type 'integer
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-accounts nil
+(defcustom agents-claude-accounts nil
   "Alist of account names to `CLAUDE_CONFIG_DIR' paths.
 Each entry is (NAME . CONFIG-DIR).  When non-nil,
-`ai-agent-claude-start-or-switch' uses the persisted account
+`agents-claude-start-or-switch' uses the persisted account
 selection and sets `CLAUDE_CONFIG_DIR' accordingly so each account
 maintains its own OAuth credentials.
 
-Use `ai-agent-claude-select-account' to change the active account.
-The selection persists in `ai-agent-claude-account-file'.
+Use `agents-claude-select-account' to change the active account.
+The selection persists in `agents-claude-account-file'.
 
 Example:
   \\='((\"personal\" . \"~/.claude-personal\")
     (\"work\"     . \"~/.claude-work\"))"
   :type '(alist :key-type string :value-type directory)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-account-file
+(defcustom agents-claude-account-file
   (expand-file-name ".claude-current-account" "~")
   "File storing the name of the currently active Claude account.
-The file contains a single account name from `ai-agent-claude-accounts'.
-Written by `ai-agent-claude-select-account', read at session start."
+The file contains a single account name from `agents-claude-accounts'.
+Written by `agents-claude-select-account', read at session start."
   :type 'file
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defface ai-agent-claude-waiting
+(defface agents-claude-waiting
   '((t :inherit warning))
   "Face for sessions waiting for user input in the session switcher."
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defvar ai-agent-claude--current-account nil
+(defvar agents-claude--current-account nil
   "Currently active Claude account name.
-Loaded from `ai-agent-claude-account-file' on first use;
-changed by `ai-agent-claude-select-account'.")
+Loaded from `agents-claude-account-file' on first use;
+changed by `agents-claude-select-account'.")
 
-(defvar ai-agent-claude--pending-account nil
+(defvar agents-claude--pending-account nil
   "Account name for the current `claude-code' invocation.
-Dynamically bound by `ai-agent-claude--start-with-account';
-read by `ai-agent-claude-account-env'.")
+Dynamically bound by `agents-claude--start-with-account';
+read by `agents-claude-account-env'.")
 
-(defvar-local ai-agent-claude--buffer-account nil
+(defvar-local agents-claude--buffer-account nil
   "Account name that was active when this buffer's session started.
-Set by `ai-agent-claude--capture-buffer-account' via
+Set by `agents-claude--capture-buffer-account' via
 `claude-code-start-hook'.")
 
-(defcustom ai-agent-claude-settings-file
+(defcustom agents-claude-settings-file
   (expand-file-name "settings.json" "~/.claude/")
   "Claude Code settings file updated by setup commands."
   :type 'file
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-hook-wrapper
+(defcustom agents-claude-hook-wrapper
   (when-let* ((library (locate-library "claude-code")))
     (expand-file-name "bin/claude-code-hook-wrapper"
                       (file-name-directory library)))
   "Absolute path to the claude-code hook wrapper script."
   :type '(choice (const :tag "Unavailable" nil) file)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defconst ai-agent-claude--hooks-directory
+(defconst agents-claude--hooks-directory
   (file-truename
    (expand-file-name "hooks/"
                      (file-name-directory
@@ -157,55 +157,55 @@ Set by `ai-agent-claude--capture-buffer-account' via
                        (or load-file-name buffer-file-name)))))
   "Absolute path to the bundled Claude hook helper directory.")
 
-(defcustom ai-agent-claude-status-directory
+(defcustom agents-claude-status-directory
   (expand-file-name "claude-code-status/" temporary-file-directory)
   "Directory where the statusline script writes JSON status files."
   :type 'directory
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-statusline-script
+(defcustom agents-claude-statusline-script
   (expand-file-name "etc/claude-code-statusline.sh"
                     (file-name-directory
                      (file-truename
                       (or load-file-name buffer-file-name))))
   "Absolute path to the bundled Claude Code statusline script."
   :type 'file
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defvar-local ai-agent-claude--status-data nil
+(defvar-local agents-claude--status-data nil
   "Parsed status plist for the current Claude buffer.")
 
-(defvar-local ai-agent-claude--display-name-cache nil
+(defvar-local agents-claude--display-name-cache nil
   "Cached display name for the modeline.
-Updated by `ai-agent--refresh-display-names'.")
+Updated by `agents--refresh-display-names'.")
 
-(defvar-local ai-agent-claude--original-session-id nil
+(defvar-local agents-claude--original-session-id nil
   "Session ID when this buffer was first created.
 Used to detect when `/branch' creates a new session.")
 
-;; Home-row keys and session key map are now managed by ai-agent.
-(defvar ai-agent-claude--session-keys ai-agent--session-keys
-  "Alias for `ai-agent--session-keys' for backward compatibility.")
-(defconst ai-agent-claude--home-row-keys ai-agent--home-row-keys
-  "Alias for `ai-agent--home-row-keys'.")
+;; Home-row keys and session key map are now managed by agents.
+(defvar agents-claude--session-keys agents--session-keys
+  "Alias for `agents--session-keys' for backward compatibility.")
+(defconst agents-claude--home-row-keys agents--home-row-keys
+  "Alias for `agents--home-row-keys'.")
 
-(defvar-local ai-agent-claude--status-timer nil
+(defvar-local agents-claude--status-timer nil
   "Timer for periodic status polling in the current Claude buffer.")
 
-(defvar ai-agent-claude--usage-data (make-hash-table :test #'equal)
+(defvar agents-claude--usage-data (make-hash-table :test #'equal)
   "Hash table mapping account names to parsed usage plists.")
 
-(defvar ai-agent-claude--usage-timer nil
+(defvar agents-claude--usage-timer nil
   "Timer for periodic usage API polling.")
 
-(defvar ai-agent-claude--usage-current-interval nil
+(defvar agents-claude--usage-current-interval nil
   "Current polling interval in seconds, possibly increased by backoff.")
 
 (defvar eat-terminal)
 (defvar url-http-end-of-headers)
 (defvar url-request-method)
 (defvar url-request-extra-headers)
-(declare-function ai-agent-svg-icon "ai-agent" (svg-data &optional face))
+(declare-function agents-svg-icon "agents" (svg-data &optional face))
 (declare-function claude-code--term-send-return "claude-code" (backend))
 (declare-function json-pretty-print-buffer "json" ())
 (declare-function org-back-to-heading "org" (&optional invisible-ok))
@@ -223,12 +223,12 @@ Used to detect when `/branch' creates a new session.")
 
 ;;;; Backend registration
 
-(defconst ai-agent-claude-icon-svg
+(defconst agents-claude-icon-svg
   "<svg fill=\"none\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path clip-rule=\"evenodd\" d=\"M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z\" fill=\"#D97757\" fill-rule=\"evenodd\"/></svg>"
   "SVG path data for the Claude Code mascot (Clawd pixel art).
 Source: lobehub/lobe-icons (MIT).")
 
-(ai-agent-register-backend 'claude-code
+(agents-register-backend 'claude-code
   (list :buffer-p #'claude-code--buffer-p
         :find-all-buffers #'claude-code--find-all-claude-buffers
         :find-buffers-for-dir #'claude-code--find-claude-buffers-for-directory
@@ -237,43 +237,43 @@ Source: lobehub/lobe-icons (MIT).")
         :extract-instance-name #'claude-code--extract-instance-name-from-buffer-name
         :send-command (lambda (cmd &optional _buf) (claude-code--do-send-command cmd))
         :start #'claude-code--start
-        :start-new #'ai-agent-claude--start-with-account
+        :start-new #'agents-claude--start-with-account
         :program "claude"
         :send-return (lambda (&optional _buf)
                        (claude-code--term-send-return claude-code-terminal-backend))
-        :icon (lambda (&optional face) (let ((svg (ai-agent-svg-icon ai-agent-claude-icon-svg face)))
+        :icon (lambda (&optional face) (let ((svg (agents-svg-icon agents-claude-icon-svg face)))
                                         (if (string-empty-p svg) "CC" svg)))
         :account (lambda (buf)
-                   (buffer-local-value 'ai-agent-claude--buffer-account buf))
-        :has-background-tasks-p #'ai-agent-claude--has-background-tasks-p
-        :display-name-suffix #'ai-agent-claude--branch-suffix
+                   (buffer-local-value 'agents-claude--buffer-account buf))
+        :has-background-tasks-p #'agents-claude--has-background-tasks-p
+        :display-name-suffix #'agents-claude--branch-suffix
         :label "Claude Code"
-        :discover-skills #'ai-agent-claude--discover-skills
-        :handoff #'ai-agent-claude-handoff
-        :run-skill #'ai-agent-claude-run-skill
-        :audit-project #'ai-agent-claude-audit-project
-        :debug-backtrace #'ai-agent-claude-debug-backtrace
-        :setup-kill-on-exit #'ai-agent-claude-setup-kill-on-exit
-        :exit #'ai-agent-claude-exit
-        :restart #'ai-agent-claude-restart
-        :sync-theme #'ai-agent-claude--sync-theme))
+        :discover-skills #'agents-claude--discover-skills
+        :handoff #'agents-claude-handoff
+        :run-skill #'agents-claude-run-skill
+        :audit-project #'agents-claude-audit-project
+        :debug-backtrace #'agents-claude-debug-backtrace
+        :setup-kill-on-exit #'agents-claude-setup-kill-on-exit
+        :exit #'agents-claude-exit
+        :restart #'agents-claude-restart
+        :sync-theme #'agents-claude--sync-theme))
 
 ;;;; Functions
 
 ;;;;; Exit
 
 ;;;###autoload
-(defun ai-agent-claude-exit ()
+(defun agents-claude-exit ()
   "Exit the current Claude Code session.
 Sends `/exit' to the CLI, which terminates the process.  The
-sentinel installed by `ai-agent-claude-setup-kill-on-exit'
+sentinel installed by `agents-claude-setup-kill-on-exit'
 then kills the buffer."
   (interactive)
   (claude-code--do-send-command "/exit"))
 
 ;;;;; C-g fix
 
-(defun ai-agent-claude--send-escape-in-current-buffer (orig-fn)
+(defun agents-claude--send-escape-in-current-buffer (orig-fn)
   "When already in a Claude buffer, send escape directly without prompting.
 ORIG-FN is `claude-code-send-escape'.  The upstream implementation uses
 `claude-code--with-buffer', which re-resolves the target buffer via
@@ -287,7 +287,7 @@ escape sequence directly to it."
     (funcall orig-fn)))
 
 (advice-add 'claude-code-send-escape :around
-            #'ai-agent-claude--send-escape-in-current-buffer)
+            #'agents-claude--send-escape-in-current-buffer)
 
 ;;;;; Snippet insertion
 
@@ -296,24 +296,24 @@ escape sequence directly to it."
 
 ;;;;; Buffer protection
 
-(defun ai-agent-claude-protect-buffer ()
+(defun agents-claude-protect-buffer ()
   "Prompt for confirmation before killing claude-code buffers.
 Returns t if the buffer should be killed, nil otherwise.  Skips
 the prompt when the session process has already exited (e.g. via
 /exit).  Intended for use in `kill-buffer-query-functions'."
-  (or (not ai-agent-protect-buffers)
+  (or (not agents-protect-buffers)
       (not (claude-code--buffer-p (current-buffer)))
       (not (process-live-p (get-buffer-process (current-buffer))))
       (yes-or-no-p "Kill claude-code buffer? ")))
 
-(defun ai-agent-claude--confirm-kill-branches ()
+(defun agents-claude--confirm-kill-branches ()
   "Return t unless the current session has branches and user declines.
 Reads the status file to find the session ID and project
 directory, then does a fast header-only scan to check for
 branches.  Returns t (allow kill) if the session has no branches,
 if the status file is unavailable, or if the user confirms."
   (condition-case nil
-      (let ((status (ai-agent-claude--parse-status-file)))
+      (let ((status (agents-claude--parse-status-file)))
         (if (not status)
             t
           (let ((sid (plist-get status :session_id))
@@ -321,9 +321,9 @@ if the status file is unavailable, or if the user confirms."
             (if (not (and sid transcript))
                 t
               (let* ((project-dir (file-name-directory transcript))
-                     (headers (ai-agent-claude--scan-session-headers project-dir))
-                     (children-map (ai-agent-claude--build-children-map headers))
-                     (members (ai-agent-claude--collect-tree-members sid children-map))
+                     (headers (agents-claude--scan-session-headers project-dir))
+                     (children-map (agents-claude--build-children-map headers))
+                     (members (agents-claude--collect-tree-members sid children-map))
                      (branch-count (1- (hash-table-count members))))
                 (if (<= branch-count 0)
                     t
@@ -333,10 +333,10 @@ if the status file is unavailable, or if the user confirms."
                            (if (= branch-count 1) "branch" "branches")))))))))
     (error t)))
 
-(defun ai-agent-claude-setup-kill-on-exit ()
+(defun agents-claude-setup-kill-on-exit ()
   "Arrange for the buffer to be killed when the Claude process exits.
 Works with any terminal backend by wrapping the process sentinel.
-When `ai-agent-claude-warn-kill-with-branches' is non-nil and
+When `agents-claude-warn-kill-with-branches' is non-nil and
 the session has branches, prompts for confirmation before killing."
   (interactive)
   (when (claude-code--buffer-p (current-buffer))
@@ -350,26 +350,26 @@ the session has branches, prompts for confirmation before killing."
              (funcall orig process event))
            (when (and (buffer-live-p buf)
                       (with-current-buffer buf
-                        (ai-agent-claude--confirm-kill-branches)))
+                        (agents-claude--confirm-kill-branches)))
              (condition-case nil
                  (kill-buffer buf)
                (error nil)))))))))
 
-(defun ai-agent-claude-fix-rendering ()
+(defun agents-claude-fix-rendering ()
   "Send SIGWINCH to fix terminal rendering after startup.
 Works around a race condition where Claude Code's TUI queries
 terminal dimensions before the terminal window is fully laid out,
 resulting in a garbled banner."
   (interactive)
   (when-let* ((proc (get-buffer-process (current-buffer))))
-    (ai-agent-claude--send-sigwinch-after-delay (current-buffer))))
+    (agents-claude--send-sigwinch-after-delay (current-buffer))))
 
-(defun ai-agent-claude--send-sigwinch-after-delay (buffer)
+(defun agents-claude--send-sigwinch-after-delay (buffer)
   "Send SIGWINCH to the process in BUFFER after a short delay."
-  (run-at-time ai-agent-sigwinch-delay nil
-               #'ai-agent-claude--send-sigwinch buffer))
+  (run-at-time agents-sigwinch-delay nil
+               #'agents-claude--send-sigwinch buffer))
 
-(defun ai-agent-claude--send-sigwinch (buffer)
+(defun agents-claude--send-sigwinch (buffer)
   "Send SIGWINCH to the process in BUFFER."
   (when (buffer-live-p buffer)
     (when-let* ((proc (get-buffer-process buffer)))
@@ -377,23 +377,23 @@ resulting in a garbled banner."
 
 ;;;;; Smart start
 
-(defun ai-agent-claude-account-env (_buffer-name _dir)
+(defun agents-claude-account-env (_buffer-name _dir)
   "Return environment variables for the session being started.
-Sets `CLAUDE_CONFIG_DIR' based on `ai-agent-claude-accounts'.
-Prefers the dynamically bound `ai-agent-claude--pending-account'
-\(set by `ai-agent-claude--start-with-account' and
-`ai-agent-claude-restart') and falls back to the persisted active
-account via `ai-agent-claude--resolve-account', so callers that
+Sets `CLAUDE_CONFIG_DIR' based on `agents-claude-accounts'.
+Prefers the dynamically bound `agents-claude--pending-account'
+\(set by `agents-claude--start-with-account' and
+`agents-claude-restart') and falls back to the persisted active
+account via `agents-claude--resolve-account', so callers that
 invoke `claude-code--start' directly (handoff, branch navigation,
 debug sessions) still get the right account's `CLAUDE_CONFIG_DIR'."
-  (when-let* ((account (or ai-agent-claude--pending-account
-                           (ai-agent-claude--resolve-account)))
-              (config-dir (alist-get account ai-agent-claude-accounts
+  (when-let* ((account (or agents-claude--pending-account
+                           (agents-claude--resolve-account)))
+              (config-dir (alist-get account agents-claude-accounts
                                      nil nil #'string=)))
     (list (format "CLAUDE_CONFIG_DIR=%s"
                   (expand-file-name config-dir)))))
 
-(defconst ai-agent-claude--shared-config-items
+(defconst agents-claude--shared-config-items
   '("settings.json" "settings.local.json"
     "skills" "plugins" "projects" "memory" "history.jsonl")
   "Files and directories symlinked from `~/.claude/' into each account config dir.
@@ -402,7 +402,7 @@ project trust, memory, session history, permissions, and hooks are
 available regardless of which account is active.  Only OAuth
 credentials remain account-specific.")
 
-(defconst ai-agent-claude--shared-claude-json-keys
+(defconst agents-claude--shared-claude-json-keys
   '("theme" "claudeInChromeDefaultEnabled"
     "hasCompletedClaudeInChromeOnboarding")
   "Keys copied verbatim from canonical `~/.claude.json' into each
@@ -410,7 +410,7 @@ account copy.  The `mcpServers' key is handled separately via
 per-server deep merge.  The `projects' key is handled separately
 via trust-aware merge logic.")
 
-(defun ai-agent-claude--sync-account-config (account)
+(defun agents-claude--sync-account-config (account)
   "Sync shared state into ACCOUNT's config directory.
 Deep-merges `mcpServers' per-server from canonical, preserving
 per-account `env' entries (e.g. account-specific API keys).
@@ -422,22 +422,22 @@ projects, memory, and history from `~/.claude/'.
 Only writes `.claude.json' when actual changes are detected, to
 avoid triggering file-change detection in running Claude Code
 sessions."
-  (when-let* ((config-dir (alist-get account ai-agent-claude-accounts
+  (when-let* ((config-dir (alist-get account agents-claude-accounts
                                      nil nil #'string=))
               (target-path (expand-file-name
                             ".claude.json" (expand-file-name config-dir))))
     (make-directory (expand-file-name config-dir) t)
-    (ai-agent-claude--ensure-shared-symlinks (expand-file-name config-dir))
+    (agents-claude--ensure-shared-symlinks (expand-file-name config-dir))
     (condition-case err
-        (let* ((target (ai-agent-claude--read-claude-json target-path))
-               (canonical (ai-agent-claude--read-claude-json
+        (let* ((target (agents-claude--read-claude-json target-path))
+               (canonical (agents-claude--read-claude-json
                            (expand-file-name ".claude.json" "~")))
-               (merged-projects (ai-agent-claude--collect-all-projects))
+               (merged-projects (agents-claude--collect-all-projects))
                (changed nil))
           (when target
             ;; Sync shared keys from canonical config.
             (when canonical
-              (dolist (key ai-agent-claude--shared-claude-json-keys)
+              (dolist (key agents-claude--shared-claude-json-keys)
                 (let ((val (gethash key canonical)))
                   (when (and val
                              (not (equal (json-serialize
@@ -447,7 +447,7 @@ sessions."
                     (setq changed t))))
               ;; Deep-merge mcpServers per-server, preserving per-account env.
               (when-let* ((canonical-servers (gethash "mcpServers" canonical)))
-                (let ((merged (ai-agent-claude--merge-mcp-servers
+                (let ((merged (agents-claude--merge-mcp-servers
                                canonical-servers
                                (gethash "mcpServers" target))))
                   (unless (equal (json-serialize (gethash "mcpServers" target))
@@ -461,11 +461,11 @@ sessions."
                 (puthash "projects" merged-projects target)
                 (setq changed t)))
             (when changed
-              (ai-agent-claude--write-claude-json target-path target))))
+              (agents-claude--write-claude-json target-path target))))
       (error
-       (message "ai-agent-claude: failed to sync account config: %S" err)))))
+       (message "agents-claude: failed to sync account config: %S" err)))))
 
-(defun ai-agent-claude--merge-mcp-servers (canonical target)
+(defun agents-claude--merge-mcp-servers (canonical target)
   "Merge CANONICAL MCP servers into TARGET, preserving per-account env.
 For each server in CANONICAL, copy all keys into TARGET's entry
 but deep-merge the `env' hash table so per-account entries
@@ -479,33 +479,33 @@ survive.  Returns the merged result."
            (let ((account-env (copy-hash-table (gethash "env" existing
                                                         (make-hash-table)))))
              (maphash (lambda (k v) (puthash k v existing)) config)
-             (ai-agent-claude--deep-merge-env account-env
+             (agents-claude--deep-merge-env account-env
                                                  (gethash "env" existing))))))
      canonical)
     result))
 
-(defun ai-agent-claude--deep-merge-env (account-env target-env)
+(defun agents-claude--deep-merge-env (account-env target-env)
   "Merge ACCOUNT-ENV entries into TARGET-ENV, account wins on conflict.
 Modifies TARGET-ENV in place."
   (when (and (hash-table-p account-env)
              (> (hash-table-count account-env) 0))
     (maphash (lambda (k v) (puthash k v target-env)) account-env)))
 
-(defun ai-agent-claude--ensure-shared-symlinks (config-dir)
+(defun agents-claude--ensure-shared-symlinks (config-dir)
   "Ensure shared config symlinks exist in CONFIG-DIR.
-For each item in `ai-agent-claude--shared-config-items', create a
+For each item in `agents-claude--shared-config-items', create a
 symlink pointing to the canonical file or directory in `~/.claude/'.
 If the target is a virgin-state file or empty directory (typically
 created by `claude' on first authentication), it is replaced with a
 symlink.  Targets with real content are left alone and a warning is
 logged."
   (let ((canonical-dir (expand-file-name ".claude/" "~")))
-    (dolist (item ai-agent-claude--shared-config-items)
-      (ai-agent-claude--ensure-shared-symlink
+    (dolist (item agents-claude--shared-config-items)
+      (agents-claude--ensure-shared-symlink
        (expand-file-name item canonical-dir)
        (expand-file-name item config-dir)))))
 
-(defun ai-agent-claude--ensure-shared-symlink (source target)
+(defun agents-claude--ensure-shared-symlink (source target)
   "Ensure TARGET is a symlink pointing to SOURCE.
 Create the symlink if TARGET is missing, replace TARGET if it is a
 virgin-state file or empty directory, warn and skip if TARGET has
@@ -515,18 +515,18 @@ real content."
      ((file-symlink-p target))
      ((not (file-exists-p target))
       (make-symbolic-link source target)
-      (message "ai-agent-claude: symlinked %s -> %s" target source))
-     ((ai-agent-claude--item-virgin-p target)
-      (ai-agent-claude--delete-item target)
+      (message "agents-claude: symlinked %s -> %s" target source))
+     ((agents-claude--item-virgin-p target)
+      (agents-claude--delete-item target)
       (make-symbolic-link source target)
-      (message "ai-agent-claude: replaced virgin %s with symlink to %s"
+      (message "agents-claude: replaced virgin %s with symlink to %s"
                target source))
      (t
-      (lwarn 'ai-agent-claude :warning
+      (lwarn 'agents-claude :warning
              "%s has real content; cannot replace with symlink to %s"
              target source)))))
 
-(defun ai-agent-claude--item-virgin-p (path)
+(defun agents-claude--item-virgin-p (path)
   "Return non-nil if PATH is a virgin-state file or empty directory.
 An empty directory is virgin.  A zero-byte file is virgin.  A small
 JSON file containing only `{}' or `[]' is virgin."
@@ -534,9 +534,9 @@ JSON file containing only `{}' or `[]' is virgin."
    ((file-directory-p path)
     (null (directory-files path nil directory-files-no-dot-files-regexp)))
    ((file-regular-p path)
-    (ai-agent-claude--file-virgin-p path))))
+    (agents-claude--file-virgin-p path))))
 
-(defun ai-agent-claude--file-virgin-p (path)
+(defun agents-claude--file-virgin-p (path)
   "Return non-nil if regular file PATH has empty or placeholder content."
   (let ((size (file-attribute-size (file-attributes path))))
     (or (zerop size)
@@ -547,13 +547,13 @@ JSON file containing only `{}' or `[]' is virgin."
                         (buffer-string)))
                      '("" "{}" "[]"))))))
 
-(defun ai-agent-claude--delete-item (path)
+(defun agents-claude--delete-item (path)
   "Delete PATH, whether it is a file or a directory."
   (if (file-directory-p path)
       (delete-directory path t)
     (delete-file path)))
 
-(defun ai-agent-claude--read-claude-json (path)
+(defun agents-claude--read-claude-json (path)
   "Read and parse the JSON file at PATH.
 Return a hash table, or nil if PATH does not exist or is invalid."
   (when (file-exists-p path)
@@ -563,31 +563,31 @@ Return a hash table, or nil if PATH does not exist or is invalid."
           (json-parse-buffer))
       (error nil))))
 
-(defun ai-agent-claude--collect-all-projects ()
+(defun agents-claude--collect-all-projects ()
   "Collect and merge `projects' from all `.claude.json' sources.
 Reads the canonical `~/.claude.json' first, then each account
 config.  For duplicate keys, prefers entries where
 `hasTrustDialogAccepted' is true."
   (let ((merged (make-hash-table :test #'equal))
-        (paths (ai-agent-claude--all-claude-json-paths)))
+        (paths (agents-claude--all-claude-json-paths)))
     (dolist (path paths)
-      (when-let* ((data (ai-agent-claude--read-claude-json path))
+      (when-let* ((data (agents-claude--read-claude-json path))
                   (projects (gethash "projects" data)))
         (when (hash-table-p projects)
           (maphash (lambda (key val)
-                     (ai-agent-claude--merge-project merged key val))
+                     (agents-claude--merge-project merged key val))
                    projects))))
     merged))
 
-(defun ai-agent-claude--all-claude-json-paths ()
+(defun agents-claude--all-claude-json-paths ()
   "Return paths to the canonical and all account `.claude.json' files."
   (cons (expand-file-name ".claude.json" "~")
         (mapcar (lambda (entry)
                   (expand-file-name ".claude.json"
                                     (expand-file-name (cdr entry))))
-                ai-agent-claude-accounts)))
+                agents-claude-accounts)))
 
-(defun ai-agent-claude--merge-project (table key val)
+(defun agents-claude--merge-project (table key val)
   "Merge project VAL under KEY into TABLE.
 Prefers entries where `hasTrustDialogAccepted' is true."
   (let ((existing (gethash key table)))
@@ -599,69 +599,69 @@ Prefers entries where `hasTrustDialogAccepted' is true."
            (not (eq (gethash "hasTrustDialogAccepted" existing) t)))
       (puthash key val table)))))
 
-(defun ai-agent-claude--write-claude-json (path data)
+(defun agents-claude--write-claude-json (path data)
   "Write DATA as pretty-printed JSON to PATH."
   (require 'json)
   (with-temp-file path
     (insert (json-serialize data))
     (json-pretty-print-buffer)))
 
-(defun ai-agent-claude--load-account ()
-  "Load the current account from `ai-agent-claude-account-file'.
+(defun agents-claude--load-account ()
+  "Load the current account from `agents-claude-account-file'.
 Return the account name, or nil if the file is missing or stale."
-  (when (file-exists-p ai-agent-claude-account-file)
+  (when (file-exists-p agents-claude-account-file)
     (let ((name (string-trim
                  (with-temp-buffer
-                   (insert-file-contents ai-agent-claude-account-file)
+                   (insert-file-contents agents-claude-account-file)
                    (buffer-string)))))
-      (when (alist-get name ai-agent-claude-accounts nil nil #'string=)
+      (when (alist-get name agents-claude-accounts nil nil #'string=)
         name))))
 
-(defun ai-agent-claude--save-account (name)
-  "Persist NAME as the active account to `ai-agent-claude-account-file'."
-  (with-temp-file ai-agent-claude-account-file
+(defun agents-claude--save-account (name)
+  "Persist NAME as the active account to `agents-claude-account-file'."
+  (with-temp-file agents-claude-account-file
     (insert name "\n"))
-  (setq ai-agent-claude--current-account name))
+  (setq agents-claude--current-account name))
 
-(defun ai-agent-claude--prompt-account ()
-  "Prompt for an account from `ai-agent-claude-accounts'.
+(defun agents-claude--prompt-account ()
+  "Prompt for an account from `agents-claude-accounts'.
 Return the account name, or nil."
-  (when ai-agent-claude-accounts
-    (let ((names (mapcar #'car ai-agent-claude-accounts)))
+  (when agents-claude-accounts
+    (let ((names (mapcar #'car agents-claude-accounts)))
       (if (= (length names) 1)
           (car names)
         (completing-read "Account: " names nil t)))))
 
-(defun ai-agent-claude--resolve-account ()
+(defun agents-claude--resolve-account ()
   "Return the active account, loading from disk or prompting as needed.
-On first use, loads from `ai-agent-claude-account-file'.  If no
+On first use, loads from `agents-claude-account-file'.  If no
 persisted account exists, prompts once and saves the selection."
-  (when ai-agent-claude-accounts
-    (unless ai-agent-claude--current-account
-      (setq ai-agent-claude--current-account
-            (ai-agent-claude--load-account)))
-    (or ai-agent-claude--current-account
-        (let ((account (ai-agent-claude--prompt-account)))
+  (when agents-claude-accounts
+    (unless agents-claude--current-account
+      (setq agents-claude--current-account
+            (agents-claude--load-account)))
+    (or agents-claude--current-account
+        (let ((account (agents-claude--prompt-account)))
           (when account
-            (ai-agent-claude--save-account account))
+            (agents-claude--save-account account))
           account))))
 
 ;;;###autoload
-(defun ai-agent-claude-select-account ()
+(defun agents-claude-select-account ()
   "Switch the active Claude account.
-Prompts for an account from `ai-agent-claude-accounts' and
+Prompts for an account from `agents-claude-accounts' and
 persists the selection.  New sessions will use this account."
   (interactive)
-  (unless ai-agent-claude-accounts
-    (user-error "No accounts configured in `ai-agent-claude-accounts'"))
-  (let ((account (ai-agent-claude--prompt-account)))
+  (unless agents-claude-accounts
+    (user-error "No accounts configured in `agents-claude-accounts'"))
+  (let ((account (agents-claude--prompt-account)))
     (when account
-      (ai-agent-claude--save-account account)
-      (ai-agent-claude--sync-account-config account)
+      (agents-claude--save-account account)
+      (agents-claude--sync-account-config account)
       (message "Switched to account: %s" account))))
 
 ;;;###autoload
-(defun ai-agent-claude-init-account (account)
+(defun agents-claude-init-account (account)
   "Initialize ACCOUNT's config directory without switching to it.
 Creates the config directory and all shared symlinks pointing at
 `~/.claude/'.  Safe to call on an already-initialized account: it heals
@@ -673,32 +673,32 @@ account whose shared files got reset.  Does not change the persisted
 active account."
   (interactive
    (list (completing-read "Initialize account: "
-                          (mapcar #'car ai-agent-claude-accounts)
+                          (mapcar #'car agents-claude-accounts)
                           nil t)))
-  (unless (alist-get account ai-agent-claude-accounts nil nil #'string=)
-    (user-error "Account %S not in `ai-agent-claude-accounts'" account))
-  (ai-agent-claude--sync-account-config account)
+  (unless (alist-get account agents-claude-accounts nil nil #'string=)
+    (user-error "Account %S not in `agents-claude-accounts'" account))
+  (agents-claude--sync-account-config account)
   (message "Initialized account: %s" account))
 
-(defun ai-agent-claude--start-with-account ()
+(defun agents-claude--start-with-account ()
   "Start a new Claude session using the active account."
   (interactive)
-  (let* ((account (ai-agent-claude--resolve-account))
-         (ai-agent-claude--pending-account account))
+  (let* ((account (agents-claude--resolve-account))
+         (agents-claude--pending-account account))
     (when account
-      (ai-agent-claude--sync-account-config account))
+      (agents-claude--sync-account-config account))
     (claude-code)))
 
 ;;;###autoload
-(defun ai-agent-claude-start-or-switch ()
+(defun agents-claude-start-or-switch ()
   "Start a new Claude session or switch to an existing one.
 If no sessions are active, start a new one.  If sessions exist,
 show the unified session switcher."
   (interactive)
   (if (null (claude-code--find-all-claude-buffers))
-      (ai-agent-claude--start-with-account)
-    (ai-agent--ensure-all-session-keys)
-    (transient-setup 'ai-agent--session-switcher)))
+      (agents-claude--start-with-account)
+    (agents--ensure-all-session-keys)
+    (transient-setup 'agents--session-switcher)))
 
 
 
@@ -709,43 +709,43 @@ show the unified session switcher."
 
 
 
-(defun ai-agent-claude-display-name (&optional buffer)
+(defun agents-claude-display-name (&optional buffer)
   "Return the display name for BUFFER's modeline.
-Delegates to `ai-agent-display-name', which appends branch suffixes
+Delegates to `agents-display-name', which appends branch suffixes
 through the Claude backend registration."
-  (ai-agent-display-name (or buffer (current-buffer))))
+  (agents-display-name (or buffer (current-buffer))))
 
 
-(defun ai-agent-claude--branch-suffix (buffer)
+(defun agents-claude--branch-suffix (buffer)
   "Return a short branch ID for BUFFER, or nil if not branched."
   (with-current-buffer buffer
-    (let ((original ai-agent-claude--original-session-id)
-          (current (when ai-agent-claude--status-data
-                     (plist-get ai-agent-claude--status-data :session_id))))
+    (let ((original agents-claude--original-session-id)
+          (current (when agents-claude--status-data
+                     (plist-get agents-claude--status-data :session_id))))
       (when (and original current (not (string= original current)))
         (substring current 0 8)))))
 
-(defun ai-agent-claude--refresh-display-names ()
+(defun agents-claude--refresh-display-names ()
   "Recompute and cache display names for all Claude buffers."
-  (ai-agent--refresh-display-names))
+  (agents--refresh-display-names))
 
 ;;;;; Status polling
 
-(defun ai-agent-claude-start-status-polling ()
+(defun agents-claude-start-status-polling ()
   "Start polling the status file for the current Claude buffer."
   (interactive)
   (when (claude-code--buffer-p (current-buffer))
-    (when ai-agent-claude--status-timer
-      (cancel-timer ai-agent-claude--status-timer))
+    (when agents-claude--status-timer
+      (cancel-timer agents-claude--status-timer))
     (let* ((buf (current-buffer))
            (timer-cell (cons nil nil))
            (timer (run-with-timer
-                   ai-agent-claude-status-interval
-                   ai-agent-claude-status-interval
-                   #'ai-agent-claude--read-status
+                   agents-claude-status-interval
+                   agents-claude-status-interval
+                   #'agents-claude--read-status
                    timer-cell buf)))
       (setcar timer-cell timer)
-      (setq ai-agent-claude--status-timer timer))))
+      (setq agents-claude--status-timer timer))))
 
 (defvar monet--sessions)
 (declare-function monet--session-server "monet")
@@ -754,7 +754,7 @@ through the Claude backend registration."
 (declare-function monet--remove-lockfile "monet")
 (declare-function websocket-server-close "websocket")
 
-(defun ai-agent-claude--monet-stop-session (key)
+(defun agents-claude--monet-stop-session (key)
   "Fully stop the monet session for KEY.
 Closes the websocket server, removes the lockfile, and removes
 the session from `monet--sessions'."
@@ -768,21 +768,21 @@ the session from `monet--sessions'."
         (delete-process server)))
     (remhash key monet--sessions)))
 
-(defun ai-agent-claude--cleanup-monet-session ()
+(defun agents-claude--cleanup-monet-session ()
   "Clean up the monet websocket session for the current Claude buffer."
   (when (and (claude-code--buffer-p (current-buffer))
              (boundp 'monet--sessions))
-    (ai-agent-claude--monet-stop-session (buffer-name))))
+    (agents-claude--monet-stop-session (buffer-name))))
 
-(defun ai-agent-claude--monet-cleanup-before-start (orig-fn key directory)
+(defun agents-claude--monet-cleanup-before-start (orig-fn key directory)
   "Clean up old monet session for KEY before starting a new one.
 ORIG-FN is called with KEY and DIRECTORY after cleanup."
   (when (and (boundp 'monet--sessions)
              (gethash key monet--sessions))
-    (ai-agent-claude--monet-stop-session key))
+    (agents-claude--monet-stop-session key))
   (funcall orig-fn key directory))
 
-(defun ai-agent-claude--monet-gc-orphaned-servers ()
+(defun agents-claude--monet-gc-orphaned-servers ()
   "Delete websocket server processes not tracked by any monet session.
 Runs periodically as a safety net to catch servers leaked through
 any code path."
@@ -799,7 +799,7 @@ any code path."
                    (not (memq p active-servers)))
           (delete-process p))))))
 
-(defun ai-agent-claude--diff-file-in-session-p (diff-buffer session)
+(defun agents-claude--diff-file-in-session-p (diff-buffer session)
   "Return non-nil if DIFF-BUFFER's file is inside SESSION's directory."
   (when-let ((session-dir (and session (monet--session-directory session)))
              (file-dir (buffer-local-value 'default-directory diff-buffer)))
@@ -807,14 +807,14 @@ any code path."
                          (file-name-as-directory
                           (expand-file-name session-dir)))))
 
-(defun ai-agent-claude--display-diff-buffer (diff-buffer &optional session)
+(defun agents-claude--display-diff-buffer (diff-buffer &optional session)
   "Display DIFF-BUFFER in a bottom side window without switching tabs.
 Override for `monet--display-diff-buffer' that avoids the tab-switching
 side effects of `display-buffer-in-tab', which can corrupt the window
 layout when called from an async websocket callback.
 When SESSION is provided and the file is outside the session directory,
 the diff is suppressed entirely; the terminal approval prompt suffices."
-  (if (and session (not (ai-agent-claude--diff-file-in-session-p diff-buffer session)))
+  (if (and session (not (agents-claude--diff-file-in-session-p diff-buffer session)))
       nil
     (display-buffer diff-buffer
                     '((display-buffer-in-side-window)
@@ -825,31 +825,31 @@ the diff is suppressed entirely; the terminal approval prompt suffices."
 
 (with-eval-after-load 'monet
   (advice-add 'monet-start-server-in-directory :around
-              #'ai-agent-claude--monet-cleanup-before-start)
+              #'agents-claude--monet-cleanup-before-start)
   (advice-add 'monet--display-diff-buffer :override
-              #'ai-agent-claude--display-diff-buffer)
-  (run-with-timer 60 60 #'ai-agent-claude--monet-gc-orphaned-servers))
+              #'agents-claude--display-diff-buffer)
+  (run-with-timer 60 60 #'agents-claude--monet-gc-orphaned-servers))
 
-(defun ai-agent-claude-stop-status-polling ()
+(defun agents-claude-stop-status-polling ()
   "Stop status polling and clean up the status file."
   (interactive)
   (when (and (claude-code--buffer-p (current-buffer))
-             ai-agent-claude--status-timer)
-    (cancel-timer ai-agent-claude--status-timer)
-    (ai-agent-claude--cleanup-status-file)))
+             agents-claude--status-timer)
+    (cancel-timer agents-claude--status-timer)
+    (agents-claude--cleanup-status-file)))
 
-(defun ai-agent-claude--read-status (timer-cell buffer)
+(defun agents-claude--read-status (timer-cell buffer)
   "Read and parse the status file for BUFFER.
 TIMER-CELL is a cons whose car is the timer that triggered this
 call; it is canceled automatically when BUFFER is no longer live."
   (if (not (buffer-live-p buffer))
       (cancel-timer (car timer-cell))
     (with-current-buffer buffer
-      (when-let* ((data (ai-agent-claude--parse-status-file)))
-        (ai-agent-claude--detect-branch data)
-        (setq ai-agent-claude--status-data data)))))
+      (when-let* ((data (agents-claude--parse-status-file)))
+        (agents-claude--detect-branch data)
+        (setq agents-claude--status-data data)))))
 
-(defun ai-agent-claude--detect-branch (new-data)
+(defun agents-claude--detect-branch (new-data)
   "Detect a session ID change, indicating a branch.
 NEW-DATA is the freshly parsed status plist.  On the first poll,
 records the session ID as the original.  On subsequent polls, if
@@ -857,16 +857,16 @@ the ID differs from the previous one, refreshes display names so
 the modeline reflects the new branch."
   (let ((new-id (plist-get new-data :session_id)))
     (when new-id
-      (if (not ai-agent-claude--original-session-id)
-          (setq ai-agent-claude--original-session-id new-id)
-        (let ((old-id (plist-get ai-agent-claude--status-data :session_id)))
+      (if (not agents-claude--original-session-id)
+          (setq agents-claude--original-session-id new-id)
+        (let ((old-id (plist-get agents-claude--status-data :session_id)))
           (when (and old-id (not (string= new-id old-id)))
-            (ai-agent-claude--refresh-display-names)))))))
+            (agents-claude--refresh-display-names)))))))
 
-(defun ai-agent-claude--parse-status-file ()
+(defun agents-claude--parse-status-file ()
   "Parse the status JSON file for the current buffer.
 Returns a plist, or nil if the file is missing or malformed."
-  (let ((file (ai-agent-claude--status-file)))
+  (let ((file (agents-claude--status-file)))
     (when (file-exists-p file)
       (condition-case nil
           (json-parse-string
@@ -876,116 +876,116 @@ Returns a plist, or nil if the file is missing or malformed."
            :object-type 'plist)
         (json-parse-error nil)))))
 
-(defun ai-agent-claude--status-file ()
+(defun agents-claude--status-file ()
   "Return the status file path for the current buffer."
   (expand-file-name
-   (ai-agent-claude--status-file-name (buffer-name))
-   ai-agent-claude-status-directory))
+   (agents-claude--status-file-name (buffer-name))
+   agents-claude-status-directory))
 
-(defun ai-agent-claude--status-file-name (buffer-name)
+(defun agents-claude--status-file-name (buffer-name)
   "Return the collision-resistant status filename for BUFFER-NAME."
   (concat (secure-hash 'sha256 buffer-name) ".json"))
 
-(defun ai-agent-claude--sanitize-buffer-name ()
+(defun agents-claude--sanitize-buffer-name ()
   "Sanitize the current buffer name for use as a filename.
 Replaces every character that is not alphanumeric, underscore,
 or hyphen with an underscore, mirroring the shell script's
 `tr -c' invocation."
   (replace-regexp-in-string "[^a-zA-Z0-9_-]" "_" (buffer-name)))
 
-(defun ai-agent-claude--cleanup-status-file ()
+(defun agents-claude--cleanup-status-file ()
   "Delete the status file for the current buffer."
-  (let ((file (ai-agent-claude--status-file)))
+  (let ((file (agents-claude--status-file)))
     (when (file-exists-p file)
       (delete-file file))))
 
 ;;;;; Usage polling
 
-(defun ai-agent-claude--fetch-usage ()
+(defun agents-claude--fetch-usage ()
   "Fetch usage data for all accounts with active sessions."
-  (dolist (account (ai-agent-claude--active-accounts))
-    (ai-agent-claude--fetch-usage-for-account account)))
+  (dolist (account (agents-claude--active-accounts))
+    (agents-claude--fetch-usage-for-account account)))
 
-(defun ai-agent-claude--fetch-usage-for-account (account)
+(defun agents-claude--fetch-usage-for-account (account)
   "Fetch usage data for ACCOUNT asynchronously.
 Reads the OAuth token from the macOS Keychain and queries the
 undocumented `api/oauth/usage' endpoint.  Stores the parsed
-response in `ai-agent-claude--usage-data' keyed by ACCOUNT."
-  (when-let* ((token (ai-agent-claude--get-oauth-token account)))
+response in `agents-claude--usage-data' keyed by ACCOUNT."
+  (when-let* ((token (agents-claude--get-oauth-token account)))
     (let ((url-request-method "GET")
           (url-request-extra-headers
            `(("Authorization" . ,(concat "Bearer " token))
              ("anthropic-beta" . "oauth-2025-04-20"))))
       (url-retrieve
        "https://api.anthropic.com/api/oauth/usage"
-       #'ai-agent-claude--handle-usage-response
+       #'agents-claude--handle-usage-response
        (list account) t t))))
 
-(defun ai-agent-claude--handle-usage-response (status account)
+(defun agents-claude--handle-usage-response (status account)
   "Handle the async usage API response for ACCOUNT.
 STATUS is the plist passed by `url-retrieve'."
   (unwind-protect
       (let ((err (plist-get status :error)))
-        (if (ai-agent-claude--usage-response-429-p err)
-            (ai-agent-claude--usage-backoff)
+        (if (agents-claude--usage-response-429-p err)
+            (agents-claude--usage-backoff)
           (when (and (null err) url-http-end-of-headers)
             (goto-char url-http-end-of-headers)
             (condition-case nil
                 (progn
                   (puthash account
                            (json-parse-buffer :object-type 'plist)
-                           ai-agent-claude--usage-data)
-                  (ai-agent-claude--usage-reset-interval))
+                           agents-claude--usage-data)
+                  (agents-claude--usage-reset-interval))
               (json-parse-error nil)))))
     (kill-buffer)))
 
-(defun ai-agent-claude--usage-response-429-p (err)
+(defun agents-claude--usage-response-429-p (err)
   "Return non-nil if ERR indicates an HTTP 429 response."
   (and (consp err)
        (eq (car err) 'error)
        (member 429 (cdr err))))
 
-(defun ai-agent-claude--usage-backoff ()
+(defun agents-claude--usage-backoff ()
   "Double the polling interval, capped at the configured maximum."
-  (let ((new-interval (min (* 2 (or ai-agent-claude--usage-current-interval
-                                    ai-agent-claude-usage-interval))
-                           ai-agent-claude-usage-max-interval)))
-    (setq ai-agent-claude--usage-current-interval new-interval)
-    (ai-agent-claude--usage-reschedule new-interval)))
+  (let ((new-interval (min (* 2 (or agents-claude--usage-current-interval
+                                    agents-claude-usage-interval))
+                           agents-claude-usage-max-interval)))
+    (setq agents-claude--usage-current-interval new-interval)
+    (agents-claude--usage-reschedule new-interval)))
 
-(defun ai-agent-claude--usage-reset-interval ()
+(defun agents-claude--usage-reset-interval ()
   "Reset the polling interval to the base value after a successful fetch."
-  (when (and ai-agent-claude--usage-current-interval
-             (> ai-agent-claude--usage-current-interval
-                ai-agent-claude-usage-interval))
-    (setq ai-agent-claude--usage-current-interval
-          ai-agent-claude-usage-interval)
-    (ai-agent-claude--usage-reschedule
-     ai-agent-claude-usage-interval)))
+  (when (and agents-claude--usage-current-interval
+             (> agents-claude--usage-current-interval
+                agents-claude-usage-interval))
+    (setq agents-claude--usage-current-interval
+          agents-claude-usage-interval)
+    (agents-claude--usage-reschedule
+     agents-claude-usage-interval)))
 
-(defun ai-agent-claude--usage-reschedule (interval)
+(defun agents-claude--usage-reschedule (interval)
   "Cancel the current usage timer and restart it with INTERVAL seconds."
-  (when ai-agent-claude--usage-timer
-    (cancel-timer ai-agent-claude--usage-timer)
-    (setq ai-agent-claude--usage-timer
+  (when agents-claude--usage-timer
+    (cancel-timer agents-claude--usage-timer)
+    (setq agents-claude--usage-timer
           (run-with-timer interval interval
-                          #'ai-agent-claude--fetch-usage))))
+                          #'agents-claude--fetch-usage))))
 
-(defun ai-agent-claude--active-accounts ()
+(defun agents-claude--active-accounts ()
   "Return a list of unique account names with active Claude sessions.
 Returns a list containing nil when no multi-account setup exists."
   (let ((accounts nil))
     (dolist (buf (claude-code--find-all-claude-buffers))
       (when (buffer-live-p buf)
         (with-current-buffer buf
-          (cl-pushnew ai-agent-claude--buffer-account accounts
+          (cl-pushnew agents-claude--buffer-account accounts
                       :test #'equal))))
     (or accounts (list nil))))
 
-(defun ai-agent-claude--get-oauth-token (account)
+(defun agents-claude--get-oauth-token (account)
   "Extract the OAuth access token from the macOS Keychain for ACCOUNT.
 Returns the token string, or nil if unavailable."
-  (let ((service (ai-agent-claude--keychain-service account)))
+  (let ((service (agents-claude--keychain-service account)))
     (when-let* ((raw (with-output-to-string
                        (with-current-buffer standard-output
                          (call-process "security" nil t nil
@@ -998,90 +998,90 @@ Returns the token string, or nil if unavailable."
                 (oauth (plist-get json :claudeAiOauth)))
       (plist-get oauth :accessToken))))
 
-(defun ai-agent-claude--keychain-service (account)
+(defun agents-claude--keychain-service (account)
   "Return the macOS Keychain service name for ACCOUNT.
 Computes the SHA-256 prefix of the expanded config directory
 path, matching Claude Code's credential storage convention.
-When ACCOUNT is nil or not in `ai-agent-claude-accounts',
+When ACCOUNT is nil or not in `agents-claude-accounts',
 returns the default service name."
   (if-let* ((name (and (stringp account) account))
-            (config-dir (alist-get name ai-agent-claude-accounts
+            (config-dir (alist-get name agents-claude-accounts
                                    nil nil #'string=)))
       (concat "Claude Code-credentials-"
               (substring (secure-hash 'sha256 (expand-file-name config-dir))
                          0 8))
     "Claude Code-credentials"))
 
-(defun ai-agent-claude-start-usage-polling ()
+(defun agents-claude-start-usage-polling ()
   "Start polling the usage API.
 Does nothing if the timer is already running."
   (interactive)
-  (unless ai-agent-claude--usage-timer
-    (setq ai-agent-claude--usage-current-interval
-          ai-agent-claude-usage-interval)
-    (ai-agent-claude--fetch-usage)
-    (setq ai-agent-claude--usage-timer
+  (unless agents-claude--usage-timer
+    (setq agents-claude--usage-current-interval
+          agents-claude-usage-interval)
+    (agents-claude--fetch-usage)
+    (setq agents-claude--usage-timer
           (run-with-timer
-           ai-agent-claude-usage-interval
-           ai-agent-claude-usage-interval
-           #'ai-agent-claude--fetch-usage))))
+           agents-claude-usage-interval
+           agents-claude-usage-interval
+           #'agents-claude--fetch-usage))))
 
-(defun ai-agent-claude-stop-usage-polling ()
+(defun agents-claude-stop-usage-polling ()
   "Stop polling the usage API."
   (interactive)
-  (when ai-agent-claude--usage-timer
-    (cancel-timer ai-agent-claude--usage-timer)
-    (setq ai-agent-claude--usage-timer nil
-          ai-agent-claude--usage-current-interval nil)))
+  (when agents-claude--usage-timer
+    (cancel-timer agents-claude--usage-timer)
+    (setq agents-claude--usage-timer nil
+          agents-claude--usage-current-interval nil)))
 
 ;;;;; Status accessors
 
-(defun ai-agent-claude-status-model ()
+(defun agents-claude-status-model ()
   "Return the model display name from the status data."
-  (when-let* ((model (plist-get ai-agent-claude--status-data :model)))
+  (when-let* ((model (plist-get agents-claude--status-data :model)))
     (plist-get model :display_name)))
 
-(defun ai-agent-claude-status-cost ()
+(defun agents-claude-status-cost ()
   "Return the total session cost in USD from the status data."
-  (when-let* ((cost (plist-get ai-agent-claude--status-data :cost)))
+  (when-let* ((cost (plist-get agents-claude--status-data :cost)))
     (plist-get cost :total_cost_usd)))
 
-(defun ai-agent-claude-status-context-percent ()
+(defun agents-claude-status-context-percent ()
   "Return the context window usage percentage from the status data."
-  (when-let* ((ctx (plist-get ai-agent-claude--status-data :context_window)))
+  (when-let* ((ctx (plist-get agents-claude--status-data :context_window)))
     (plist-get ctx :used_percentage)))
 
-(defun ai-agent-claude-status-token-count ()
+(defun agents-claude-status-token-count ()
   "Return the total input token count from the status data."
-  (when-let* ((ctx (plist-get ai-agent-claude--status-data :context_window)))
+  (when-let* ((ctx (plist-get agents-claude--status-data :context_window)))
     (plist-get ctx :total_input_tokens)))
 
-(defun ai-agent-claude-status-lines-added ()
+(defun agents-claude-status-lines-added ()
   "Return the total lines added from the status data."
-  (when-let* ((cost (plist-get ai-agent-claude--status-data :cost)))
+  (when-let* ((cost (plist-get agents-claude--status-data :cost)))
     (plist-get cost :total_lines_added)))
 
-(defun ai-agent-claude-status-lines-removed ()
+(defun agents-claude-status-lines-removed ()
   "Return the total lines removed from the status data."
-  (when-let* ((cost (plist-get ai-agent-claude--status-data :cost)))
+  (when-let* ((cost (plist-get agents-claude--status-data :cost)))
     (plist-get cost :total_lines_removed)))
 
-(defun ai-agent-claude-status-duration-ms ()
+(defun agents-claude-status-duration-ms ()
   "Return the total session duration in milliseconds from the status data."
-  (when-let* ((cost (plist-get ai-agent-claude--status-data :cost)))
+  (when-let* ((cost (plist-get agents-claude--status-data :cost)))
     (plist-get cost :total_duration_ms)))
 
-(defun ai-agent-claude-status-cache-read-tokens ()
+(defun agents-claude-status-cache-read-tokens ()
   "Return the cache read input token count from the status data."
-  (when-let* ((ctx (plist-get ai-agent-claude--status-data :context_window))
+  (when-let* ((ctx (plist-get agents-claude--status-data :context_window))
               (usage (plist-get ctx :current_usage)))
     (plist-get usage :cache_read_input_tokens)))
 
-(defun ai-agent-claude-status-cache-total-tokens ()
+(defun agents-claude-status-cache-total-tokens ()
   "Return the total input tokens for the current turn from the status data.
 This is the sum of INPUT_TOKENS, CACHE_CREATION_INPUT_TOKENS, and
 CACHE_READ_INPUT_TOKENS."
-  (when-let* ((ctx (plist-get ai-agent-claude--status-data :context_window))
+  (when-let* ((ctx (plist-get agents-claude--status-data :context_window))
               (usage (plist-get ctx :current_usage)))
     (let ((input (or (plist-get usage :input_tokens) 0))
           (creation (or (plist-get usage :cache_creation_input_tokens) 0))
@@ -1090,50 +1090,50 @@ CACHE_READ_INPUT_TOKENS."
 
 ;;;;; Usage accessors
 
-(defun ai-agent-claude--usage-for-buffer ()
+(defun agents-claude--usage-for-buffer ()
   "Return the usage plist for the current buffer's account."
-  (gethash ai-agent-claude--buffer-account
-           ai-agent-claude--usage-data))
+  (gethash agents-claude--buffer-account
+           agents-claude--usage-data))
 
-(defun ai-agent-claude-status-session-usage ()
+(defun agents-claude-status-session-usage ()
   "Return the 5-hour session utilization percentage."
-  (when-let* ((data (ai-agent-claude--usage-for-buffer))
+  (when-let* ((data (agents-claude--usage-for-buffer))
               (five (plist-get data :five_hour)))
     (plist-get five :utilization)))
 
-(defun ai-agent-claude-status-weekly-usage ()
+(defun agents-claude-status-weekly-usage ()
   "Return the 7-day weekly utilization percentage."
-  (when-let* ((data (ai-agent-claude--usage-for-buffer))
+  (when-let* ((data (agents-claude--usage-for-buffer))
               (seven (plist-get data :seven_day)))
     (plist-get seven :utilization)))
 
-(defun ai-agent-claude-status-session-reset ()
+(defun agents-claude-status-session-reset ()
   "Return the 5-hour session reset time as an ISO string."
-  (when-let* ((data (ai-agent-claude--usage-for-buffer))
+  (when-let* ((data (agents-claude--usage-for-buffer))
               (five (plist-get data :five_hour)))
     (plist-get five :resets_at)))
 
-(defun ai-agent-claude-status-weekly-reset ()
+(defun agents-claude-status-weekly-reset ()
   "Return the 7-day weekly reset time as an ISO string."
-  (when-let* ((data (ai-agent-claude--usage-for-buffer))
+  (when-let* ((data (agents-claude--usage-for-buffer))
               (seven (plist-get data :seven_day)))
     (plist-get seven :resets_at)))
 
 ;;;;; Alert
 
-(defun ai-agent-claude-notify (title message)
+(defun agents-claude-notify (title message)
   "Notification function combining modeline pulse with optional alert.
 TITLE is the notification title.  MESSAGE is the notification
-body.  When `ai-agent-alert-on-ready' is non-nil, dispatch to
-the style configured in `ai-agent-alert-style'."
+body.  When `agents-alert-on-ready' is non-nil, dispatch to
+the style configured in `agents-alert-style'."
   (claude-code-default-notification title message)
-  (when ai-agent-alert-on-ready
-    (ai-agent--alert-visual title message)
-    (ai-agent--alert-sound)))
+  (when agents-alert-on-ready
+    (agents--alert-visual title message)
+    (agents--alert-sound)))
 
 
 
-(defun ai-agent-claude--notification-type (json-str)
+(defun agents-claude--notification-type (json-str)
   "Extract the notification type from JSON-STR.
 Return a string like \"idle_prompt\" or \"permission_prompt\", or
 nil if the type cannot be determined."
@@ -1144,7 +1144,7 @@ nil if the type cannot be determined."
               (alist-get 'type parsed)))
       (error nil))))
 
-(defun ai-agent-claude--handle-notification (message)
+(defun agents-claude--handle-notification (message)
   "Handle a notification event from the Claude Code CLI.
 MESSAGE is a plist with :type, :buffer-name, :json-data, and
 :args.  Fires OS alerts for idle_prompt, permission_prompt, and
@@ -1152,36 +1152,36 @@ elicitation_dialog notifications."
   (when (eq (plist-get message :type) 'notification)
     (when-let* ((buf (get-buffer (plist-get message :buffer-name))))
       (with-current-buffer buf
-        (let* ((name (ai-agent-claude--session-name (buffer-name)))
-               (ntype (ai-agent-claude--notification-type
+        (let* ((name (agents-claude--session-name (buffer-name)))
+               (ntype (agents-claude--notification-type
                        (plist-get message :json-data))))
           (pcase ntype
             ("idle_prompt"
-             (setq ai-agent--waiting-for-input (current-time))
-             (ai-agent-claude-notify
+             (setq agents--waiting-for-input (current-time))
+             (agents-claude-notify
               "Claude ready"
               (format "%s: waiting for your response" name)))
             ("permission_prompt"
-             (ai-agent-claude-notify
+             (agents-claude-notify
               "Claude needs approval"
               (format "%s: permission request pending" name)))
             ("elicitation_dialog"
-             (ai-agent-claude-notify
+             (agents-claude-notify
               "Claude needs input"
               (format "%s: waiting for your input" name)))
             (_
-             (ai-agent-claude-notify
+             (agents-claude-notify
               "Claude Code"
               (format "%s: needs your attention" name))))))))
   nil)
 
-(defconst ai-agent-claude--background-tasks-regexp
+(defconst agents-claude--background-tasks-regexp
   "· *[0-9]+ +\\(shells?\\|monitors?\\)"
   "Regexp matching the background-task count in Claude's status line.
 Claude Code renders \"· N shells\" or \"· N monitors\" near the
 footer when background Bash processes or Task agents are running.")
 
-(defun ai-agent-claude--has-background-tasks-p (&optional buffer)
+(defun agents-claude--has-background-tasks-p (&optional buffer)
   "Return non-nil when Claude session BUFFER has active background tasks.
 Scans the tail of the terminal buffer for Claude Code's
 status-line indicator (e.g. \"· 3 shells\" or \"· 5 monitors\")."
@@ -1190,34 +1190,34 @@ status-line indicator (e.g. \"· 3 shells\" or \"· 5 monitors\")."
       (with-current-buffer buf
         (save-excursion
           (goto-char (point-max))
-          (re-search-backward ai-agent-claude--background-tasks-regexp
+          (re-search-backward agents-claude--background-tasks-regexp
                               (max (point-min) (- (point-max) 800))
                               t))))))
 
-(defun ai-agent-claude-jump-to-waiting ()
+(defun agents-claude-jump-to-waiting ()
   "Switch to the Claude session that most recently started waiting for input."
   (interactive)
   (let (best-buf best-time)
     (dolist (buf (claude-code--find-all-claude-buffers))
       (when (buffer-live-p buf)
-        (let ((ts (buffer-local-value 'ai-agent--waiting-for-input buf)))
+        (let ((ts (buffer-local-value 'agents--waiting-for-input buf)))
           (when (and ts (or (null best-time) (time-less-p best-time ts)))
             (setq best-buf buf best-time ts)))))
     (if best-buf
         (switch-to-buffer best-buf)
       (message "No sessions waiting for input"))))
 
-(defun ai-agent-claude--handle-stop (message)
+(defun agents-claude--handle-stop (message)
   "Handle a stop event from the Claude Code CLI.
 MESSAGE is a plist with :type, :buffer-name, :json-data, and
 :args.  Scrolls the corresponding terminal buffer to bottom."
   (when (eq (plist-get message :type) 'stop)
     (when-let* ((buf (get-buffer (plist-get message :buffer-name))))
       (with-current-buffer buf
-        (ai-agent-claude--scroll-to-bottom buf))))
+        (agents-claude--scroll-to-bottom buf))))
   nil)
 
-(defun ai-agent-claude--scroll-to-bottom (buffer)
+(defun agents-claude--scroll-to-bottom (buffer)
   "Scroll BUFFER and its windows to the terminal cursor.
 Move point and all windows showing BUFFER to the eat terminal
 cursor, keeping the cursor line at the bottom of each window."
@@ -1226,9 +1226,9 @@ cursor, keeping the cursor line at the bottom of each window."
       (when (bound-and-true-p eat-terminal)
         (let ((cursor-pos (eat-term-display-cursor eat-terminal)))
           (goto-char cursor-pos)
-          (ai-agent-claude--scroll-windows-to cursor-pos))))))
+          (agents-claude--scroll-windows-to cursor-pos))))))
 
-(defun ai-agent-claude--scroll-windows-to (pos)
+(defun agents-claude--scroll-windows-to (pos)
   "Set `window-point' to POS and recenter in all windows showing this buffer."
   (dolist (window (get-buffer-window-list nil nil t))
     (set-window-point window pos)
@@ -1236,7 +1236,7 @@ cursor, keeping the cursor line at the bottom of each window."
       (goto-char pos)
       (recenter -1))))
 
-(defun ai-agent-claude--session-name (buffer-name)
+(defun agents-claude--session-name (buffer-name)
   "Extract the project name from BUFFER-NAME.
 Given \"*claude:~/path/to/project/:default*\", return
 \"project\"."
@@ -1244,58 +1244,58 @@ Given \"*claude:~/path/to/project/:default*\", return
       (match-string 1 buffer-name)
     buffer-name))
 
-(defun ai-agent-claude-toggle-alert ()
+(defun agents-claude-toggle-alert ()
   "Toggle OS notifications for the current Claude session."
   (interactive)
-  (setq ai-agent-alert-on-ready (not ai-agent-alert-on-ready))
+  (setq agents-alert-on-ready (not agents-alert-on-ready))
   (message "Claude alert notifications %s"
-           (if ai-agent-alert-on-ready "enabled" "disabled")))
+           (if agents-alert-on-ready "enabled" "disabled")))
 
-(defun ai-agent-claude-alert-indicator ()
+(defun agents-claude-alert-indicator ()
   "Return a bell icon reflecting the current alert state."
-  (if ai-agent-alert-on-ready "🔔" "🔕"))
+  (if agents-alert-on-ready "🔔" "🔕"))
 
 ;;;;; Modeline
 
 (declare-function doom-modeline-set-modeline "doom-modeline-core")
 
-(defun ai-agent-claude-set-modeline ()
+(defun agents-claude-set-modeline ()
   "Set the doom-modeline to the `ai-session' modeline for this buffer.
 Also starts status and usage polling if not already active."
   (when (claude-code--buffer-p (current-buffer))
-    (unless ai-agent-claude--status-timer
-      (ai-agent-claude-start-status-polling))
-    (ai-agent-claude-start-usage-polling)
+    (unless agents-claude--status-timer
+      (agents-claude-start-status-polling))
+    (agents-claude-start-usage-polling)
     (when (require 'doom-modeline-core nil t)
       (doom-modeline-set-modeline 'ai-session))))
 
-(defun ai-agent-claude--capture-buffer-account ()
+(defun agents-claude--capture-buffer-account ()
   "Store the account name as a buffer-local variable.
 Called from `claude-code-start-hook'.  Uses the dynamically bound
-`ai-agent-claude--pending-account' when available (set by
-`ai-agent-claude--start-with-account'), otherwise falls back to
-`ai-agent-claude--resolve-account' so that sessions started via
+`agents-claude--pending-account' when available (set by
+`agents-claude--start-with-account'), otherwise falls back to
+`agents-claude--resolve-account' so that sessions started via
 other code paths (e.g. `agent-log-resume-session') also get an account."
-  (setq ai-agent-claude--buffer-account
-        (or ai-agent-claude--pending-account
-            (ai-agent-claude--resolve-account))))
+  (setq agents-claude--buffer-account
+        (or agents-claude--pending-account
+            (agents-claude--resolve-account))))
 
-(defun ai-agent-claude-buffer-account ()
+(defun agents-claude-buffer-account ()
   "Return the account name for the current buffer, or nil."
-  ai-agent-claude--buffer-account)
+  agents-claude--buffer-account)
 
 ;;;;; Non-interactive execution
 
-(defcustom ai-agent-claude-batch-allowed-tools nil
+(defcustom agents-claude-batch-allowed-tools nil
   "Tools to auto-allow via `--allowedTools' for non-interactive execution.
 When nil (the default), no `--allowedTools' flag is passed and tool
-access is governed by `ai-agent-claude-batch-permission-mode'
+access is governed by `agents-claude-batch-permission-mode'
 and the user's settings.json."
   :type '(choice (const :tag "None (use permission-mode)" nil)
                  (repeat string))
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-batch-permission-mode "auto"
+(defcustom agents-claude-batch-permission-mode "auto"
   "Permission mode passed via `--permission-mode' for non-interactive execution.
 The default \"auto\" uses a background classifier to allow most
 actions while blocking risky ones (force pushes, mass deletion,
@@ -1306,55 +1306,55 @@ sending secrets to external endpoints, etc.)."
                  (const :tag "Accept edits" "acceptEdits")
                  (const :tag "Don't ask" "dontAsk")
                  (const :tag "None" nil))
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-batch-max-turns 30
+(defcustom agents-claude-batch-max-turns 30
   "Maximum agentic turns per entry in non-interactive execution."
   :type 'integer
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-batch-system-prompt nil
+(defcustom agents-claude-batch-system-prompt nil
   "Optional system prompt appended via `--append-system-prompt'.
 When non-nil, passed to each `claude -p' invocation."
   :type '(choice (const :tag "None" nil) string)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-batch-model nil
+(defcustom agents-claude-batch-model nil
   "Optional model override via `--model' for non-interactive execution.
 When non-nil, passed to each `claude -p' invocation."
   :type '(choice (const :tag "Default" nil) string)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-run-skill-model "opus"
-  "Model to use for `ai-agent-claude-run-skill'.
+(defcustom agents-claude-run-skill-model "opus"
+  "Model to use for `agents-claude-run-skill'.
 Skills are complex agentic tasks that benefit from the most
 capable model.  Supports aliases like \"opus\", \"sonnet\",
 \"haiku\" as well as full model IDs.  Set to nil to use
-`ai-agent-claude-batch-model' or Claude's default."
+`agents-claude-batch-model' or Claude's default."
   :type '(choice (const :tag "Opus (latest)" "opus")
                  (const :tag "Sonnet (latest)" "sonnet")
                  (const :tag "Haiku (latest)" "haiku")
                  (const :tag "Use batch default" nil)
                  string)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-audit-skills
+(defcustom agents-claude-audit-skills
   '("/code-audit" "/design-audit" "/interpretability-audit")
   "Skills to run when performing an integral project audit.
 Each entry is a skill name (with leading slash) that will be
 invoked with `--accept'."
   :type '(repeat string)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-audit-project-directories nil
-  "Directories available for selection in `ai-agent-claude-audit-project'.
+(defcustom agents-claude-audit-project-directories nil
+  "Directories available for selection in `agents-claude-audit-project'.
 New directories entered by the user are automatically added to this list."
   :type '(repeat directory)
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-org-todo-in-progress-keyword nil
+(defcustom agents-claude-org-todo-in-progress-keyword nil
   "Org TODO keyword to set when sending a heading to Claude Code.
-When non-nil, `ai-agent-claude-send-todo-at-point' changes the
+When non-nil, `agents-claude-send-todo-at-point' changes the
 heading's TODO state to this keyword after sending.  The keyword
 must be one of the values in `org-todo-keywords' for the current
 buffer.  When nil, the TODO state is not changed.
@@ -1365,12 +1365,12 @@ have configured an in-progress keyword (e.g. DOING, IN-PROGRESS,
 STARTED) can set this option to that keyword."
   :type '(choice (const :tag "Don't change TODO state" nil)
                  (string :tag "Keyword"))
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
 ;; Batch state is passed as a plist through closures to support
 ;; parallel runs.  Keys: :queue :results :log-dir :working-dir :start-time
 
-(defun ai-agent-claude--batch-collect-todos (scope)
+(defun agents-claude--batch-collect-todos (scope)
   "Collect TODO entries from the current org buffer according to SCOPE.
 SCOPE is one of `buffer', `subtree', or `region'.
 Returns a list of plists with :title and :body keys."
@@ -1396,7 +1396,7 @@ Returns a list of plists with :title and :body keys."
        ('region 'region)))
     (nreverse entries)))
 
-(defun ai-agent-claude--batch-format-prompt (entry)
+(defun agents-claude--batch-format-prompt (entry)
   "Format ENTRY plist as a prompt string for `claude -p'.
 Combines :title and :body, using title alone when body is empty."
   (let ((title (plist-get entry :title))
@@ -1405,7 +1405,7 @@ Combines :title and :body, using title alone when body is empty."
         title
       (concat title "\n\n" body))))
 
-(defun ai-agent-claude-batch-todos ()
+(defun agents-claude-batch-todos ()
   "Process org TODO entries sequentially via `claude -p'.
 Infers scope automatically: region if active, subtree if the
 buffer is narrowed, buffer otherwise.  Prompts for a working
@@ -1419,23 +1419,23 @@ in a summary buffer when all entries have been processed."
                  ((use-region-p) 'region)
                  ((buffer-narrowed-p) 'subtree)
                  (t 'buffer)))
-         (entries (ai-agent-claude--batch-collect-todos scope)))
+         (entries (agents-claude--batch-collect-todos scope)))
     (when (null entries)
       (user-error "No TODO entries found in %s" scope))
     (let ((dir (project-prompt-project-dir)))
       (when (or (eq scope 'region)
                 (yes-or-no-p
                  (format "Process %d TODO(s) in %s?" (length entries) dir)))
-        (ai-agent-claude--batch-start entries dir)))))
+        (agents-claude--batch-start entries dir)))))
 
-(defun ai-agent-claude-send-todo-at-point ()
+(defun agents-claude-send-todo-at-point ()
   "Send the org TODO at point to a running Claude Code session.
 Extracts the heading and body of the TODO entry at point,
 formats them as a prompt, and sends it to the Claude Code
 session associated with the current file's project.  When no
 unique session can be inferred, prompts for selection.
 
-When `ai-agent-claude-org-todo-in-progress-keyword' is
+When `agents-claude-org-todo-in-progress-keyword' is
 non-nil, the heading's TODO state is changed to that keyword
 after sending."
   (interactive)
@@ -1443,25 +1443,25 @@ after sending."
     (user-error "Must be called from an org-mode buffer"))
   (unless (org-get-todo-state)
     (user-error "Point is not on a TODO heading"))
-  (let* ((entry (ai-agent-claude--collect-todo-at-point))
-         (prompt (ai-agent-claude--batch-format-prompt entry))
-         (buf (ai-agent-claude--resolve-session-for-file)))
+  (let* ((entry (agents-claude--collect-todo-at-point))
+         (prompt (agents-claude--batch-format-prompt entry))
+         (buf (agents-claude--resolve-session-for-file)))
     (with-current-buffer buf
       (claude-code--do-send-command prompt))
-    (when ai-agent-claude-org-todo-in-progress-keyword
-      (org-todo ai-agent-claude-org-todo-in-progress-keyword))
+    (when agents-claude-org-todo-in-progress-keyword
+      (org-todo agents-claude-org-todo-in-progress-keyword))
     (display-buffer buf)))
 
-(defun ai-agent-claude--org-to-markdown (text)
+(defun agents-claude--org-to-markdown (text)
   "Convert org inline markup in TEXT to Markdown equivalents.
 Handles verbatim (=…=) and code (~…~) to backticks."
   (replace-regexp-in-string "[=~]\\([^=~\n]+\\)[=~]" "`\\1`" text))
 
-(defun ai-agent-claude--collect-todo-at-point ()
+(defun agents-claude--collect-todo-at-point ()
   "Return a plist with :title and :body for the TODO at point."
   (save-excursion
     (org-back-to-heading t)
-    (let* ((title (ai-agent-claude--org-to-markdown
+    (let* ((title (agents-claude--org-to-markdown
                    (org-get-heading t t t t)))
            (body-start (progn (org-end-of-meta-data t) (point)))
            (body-end (progn (outline-next-heading)
@@ -1470,7 +1470,7 @@ Handles verbatim (=…=) and code (~…~) to backticks."
                   (buffer-substring-no-properties body-start body-end))))
       (list :title title :body body))))
 
-(defun ai-agent-claude--resolve-session-for-file ()
+(defun agents-claude--resolve-session-for-file ()
   "Find the Claude Code session for the current file's project.
 Returns a buffer.  Uses the project root to find matching
 sessions.  Falls back to `claude-code--get-or-prompt-for-buffer'
@@ -1491,15 +1491,15 @@ when no project is detected or no session matches."
       (or (claude-code--get-or-prompt-for-buffer)
           (user-error "No running Claude Code session found"))))))
 
-(defun ai-agent-claude--batch-start (entries dir &optional commit-after-each)
+(defun agents-claude--batch-start (entries dir &optional commit-after-each)
   "Start batch processing of ENTRIES in working directory DIR.
 When COMMIT-AFTER-EACH is non-nil, automatically commit any uncommitted
 changes in DIR after each entry completes successfully."
   (when commit-after-each
-    (ai-agent-claude--ensure-clean-worktree dir))
+    (agents-claude--ensure-clean-worktree dir))
   (let* ((log-dir (expand-file-name
                    (format-time-string "batch_%Y-%m-%d_%H-%M-%S")
-                   ai-agent-claude-log-directory))
+                   agents-claude-log-directory))
          (state (list :queue entries
                       :results nil
                       :log-dir log-dir
@@ -1508,9 +1508,9 @@ changes in DIR after each entry completes successfully."
                       :commit-after-each commit-after-each)))
     (make-directory log-dir t)
     (message "Batch processing %d TODO(s)..." (length entries))
-    (ai-agent-claude--batch-run-next state)))
+    (agents-claude--batch-run-next state)))
 
-(defun ai-agent-claude--ensure-clean-worktree (dir)
+(defun agents-claude--ensure-clean-worktree (dir)
   "Signal a user error unless DIR is a clean git worktree."
   (let ((default-directory dir))
     (with-temp-buffer
@@ -1525,17 +1525,17 @@ changes in DIR after each entry completes successfully."
            "Refusing audit auto-commit because %s has uncommitted changes"
            dir)))))))
 
-(defun ai-agent-claude--batch-run-next (state)
+(defun agents-claude--batch-run-next (state)
   "Process the next entry in the batch queue in STATE.
 STATE is a plist with keys :queue :results :log-dir :working-dir
 :start-time.  When the queue is empty, display the summary buffer."
   (if (null (plist-get state :queue))
-      (ai-agent-claude--batch-finish state)
+      (agents-claude--batch-finish state)
     (let* ((queue (plist-get state :queue))
            (entry (car queue))
            (index (1+ (length (plist-get state :results))))
            (title (plist-get entry :title))
-           (prompt (ai-agent-claude--batch-format-prompt entry))
+           (prompt (agents-claude--batch-format-prompt entry))
            (log-file (expand-file-name
                       (format "%02d_%s.json"
                               index
@@ -1548,7 +1548,7 @@ STATE is a plist with keys :queue :results :log-dir :working-dir
                index
                (+ index (length (plist-get state :queue)))
                title)
-      (ai-agent-claude--run-prompt
+      (agents-claude--run-prompt
        prompt
        :dir (plist-get state :working-dir)
        :callback
@@ -1569,10 +1569,10 @@ STATE is a plist with keys :queue :results :log-dir :working-dir
          (when (and (zerop (plist-get result :exit-code))
                     (plist-get state :commit-after-each))
            (ignore-errors
-             (ai-agent-claude--batch-commit-changes state title)))
-         (ai-agent-claude--batch-run-next state))))))
+             (agents-claude--batch-commit-changes state title)))
+         (agents-claude--batch-run-next state))))))
 
-(defun ai-agent-claude--batch-commit-changes (state title)
+(defun agents-claude--batch-commit-changes (state title)
   "Commit uncommitted work in the working directory of STATE.
 TITLE is the entry title, used to derive the commit message scope."
   (let ((default-directory (plist-get state :working-dir)))
@@ -1586,7 +1586,7 @@ TITLE is the entry title, used to derive the commit message scope."
           (call-process "git" nil nil nil "commit" "-m"
                         (format "%s: apply audit recommendations" scope)))))))
 
-(defun ai-agent-claude--batch-parse-stream-json (raw)
+(defun agents-claude--batch-parse-stream-json (raw)
   "Parse stream-json output RAW into a plist.
 Returns (:text ASSISTANT-TEXT :cost COST :session-id ID
          :num-turns N :subtype TYPE)."
@@ -1618,7 +1618,7 @@ Returns (:text ASSISTANT-TEXT :cost COST :session-id ID
           :cost (or cost 0)
           :session-id session-id)))
 
-(defun ai-agent-claude--build-cli-args (prompt &rest kwargs)
+(defun agents-claude--build-cli-args (prompt &rest kwargs)
   "Build the argument list for `claude -p' with PROMPT.
 KWARGS are keyword arguments:
   :allowed-tools   list of tool name strings
@@ -1626,18 +1626,18 @@ KWARGS are keyword arguments:
   :system-prompt   string appended via --append-system-prompt
   :model           model name string
   :max-turns       integer, maximum agentic turns
-Each defaults to the corresponding `ai-agent-claude-batch-*'
+Each defaults to the corresponding `agents-claude-batch-*'
 customization variable when not supplied."
   (let ((allowed-tools (or (plist-get kwargs :allowed-tools)
-                           ai-agent-claude-batch-allowed-tools))
+                           agents-claude-batch-allowed-tools))
         (permission-mode (or (plist-get kwargs :permission-mode)
-                             ai-agent-claude-batch-permission-mode))
+                             agents-claude-batch-permission-mode))
         (system-prompt (or (plist-get kwargs :system-prompt)
-                           ai-agent-claude-batch-system-prompt))
+                           agents-claude-batch-system-prompt))
         (model (or (plist-get kwargs :model)
-                   ai-agent-claude-batch-model))
+                   agents-claude-batch-model))
         (max-turns (or (plist-get kwargs :max-turns)
-                       ai-agent-claude-batch-max-turns))
+                       agents-claude-batch-max-turns))
         (args (list claude-code-program
                     "-p" prompt
                     "--output-format" "stream-json"
@@ -1656,15 +1656,15 @@ customization variable when not supplied."
       (setq args (append args (list "--model" model))))
     args))
 
-(defun ai-agent-claude--run-prompt (prompt &rest kwargs)
+(defun agents-claude--run-prompt (prompt &rest kwargs)
   "Run PROMPT non-interactively via `claude -p' and call back with results.
 KWARGS are keyword arguments:
   :dir             working directory (default `default-directory')
   :callback        function called with a result plist (required)
-  :allowed-tools   passed to `ai-agent-claude--build-cli-args'
-  :system-prompt   passed to `ai-agent-claude--build-cli-args'
-  :model           passed to `ai-agent-claude--build-cli-args'
-  :max-turns       passed to `ai-agent-claude--build-cli-args'
+  :allowed-tools   passed to `agents-claude--build-cli-args'
+  :system-prompt   passed to `agents-claude--build-cli-args'
+  :model           passed to `agents-claude--build-cli-args'
+  :max-turns       passed to `agents-claude--build-cli-args'
 
 The CALLBACK receives a plist with keys:
   :exit-code  process exit code
@@ -1677,13 +1677,13 @@ The CALLBACK receives a plist with keys:
 Returns the process object."
   (let* ((dir (or (plist-get kwargs :dir) default-directory))
          (callback (or (plist-get kwargs :callback)
-                       (error "ai-agent-claude--run-prompt: :callback required")))
-         (args (apply #'ai-agent-claude--build-cli-args prompt
+                       (error "agents-claude--run-prompt: :callback required")))
+         (args (apply #'agents-claude--build-cli-args prompt
                       (cl-loop for key in '(:allowed-tools :system-prompt
                                             :model :max-turns)
                                for val = (plist-get kwargs key)
                                when val append (list key val))))
-         (env (ai-agent-claude--batch-process-environment))
+         (env (agents-claude--batch-process-environment))
          (start-time (current-time))
          (output-buf (generate-new-buffer " *claude-run-output*")))
     (let ((process-environment env)
@@ -1702,7 +1702,7 @@ Returns the process object."
                                (buffer-string)))
                         (duration (float-time
                                    (time-subtract (current-time) start-time)))
-                        (parsed (ai-agent-claude--batch-parse-stream-json raw)))
+                        (parsed (agents-claude--batch-parse-stream-json raw)))
                    (setq result (list :exit-code exit-code
                                       :duration duration
                                       :cost (or (plist-get parsed :cost) 0)
@@ -1721,10 +1721,10 @@ Returns the process object."
              (ignore-errors (kill-buffer (process-buffer proc)))
              (funcall callback result))))))))
 
-(defun ai-agent-claude--batch-process-environment ()
+(defun agents-claude--batch-process-environment ()
   "Return the process environment for non-interactive Claude runs."
-  (if-let* ((account (ai-agent-claude--resolve-account))
-            (config-dir (alist-get account ai-agent-claude-accounts
+  (if-let* ((account (agents-claude--resolve-account))
+            (config-dir (alist-get account agents-claude-accounts
                                    nil nil #'string=)))
       (cons (format "CLAUDE_CONFIG_DIR=%s" (expand-file-name config-dir))
             (cl-remove-if
@@ -1736,21 +1736,21 @@ Returns the process object."
 
 ;;;;; Skill runner
 
-(defun ai-agent-claude--parse-skill-frontmatter (file)
+(defun agents-claude--parse-skill-frontmatter (file)
   "Parse YAML frontmatter from skill FILE and return a plist.
 Returns a plist with keys :name, :description, :argument-hint,
 :argument-source, :argument-choices, :argument-default,
 :argument-multiple, :user-invocable, or nil if FILE has no
 frontmatter."
-  (ai-agent-parse-skill-frontmatter file))
+  (agents-parse-skill-frontmatter file))
 
-(defun ai-agent-claude--discover-skills ()
+(defun agents-claude--discover-skills ()
   "Discover available Claude Code skills.
 Scans `~/.claude/skills/' for global skills and the current
 project's `.claude/skills/' for project-local skills.  Also scans
 the current project's `.claude/programmatic-skills/' and
-`ai-agent-claude-programmatic-skill-directories' for skills that
-should only be invoked through `ai-agent-run-skill'.  Returns a
+`agents-claude-programmatic-skill-directories' for skills that
+should only be invoked through `agents-run-skill'.  Returns a
 list of plists, each with keys :name, :description,
 :argument-hint, :user-invocable, :path, :source.  Project skills
 shadow global skills with the same name."
@@ -1769,7 +1769,7 @@ shadow global skills with the same name."
     (when (file-directory-p global-dir)
       (dolist (file (file-expand-wildcards
                      (expand-file-name "*/SKILL.md" global-dir)))
-        (when-let* ((meta (ai-agent-claude--parse-skill-frontmatter file))
+        (when-let* ((meta (agents-claude--parse-skill-frontmatter file))
                     (name (plist-get meta :name)))
           (puthash name (append meta (list :path file :source "global"))
                    skills))))
@@ -1777,17 +1777,17 @@ shadow global skills with the same name."
     (when (and project-dir (file-directory-p project-dir))
       (dolist (file (file-expand-wildcards
                      (expand-file-name "*/SKILL.md" project-dir)))
-        (when-let* ((meta (ai-agent-claude--parse-skill-frontmatter file))
+        (when-let* ((meta (agents-claude--parse-skill-frontmatter file))
                     (name (plist-get meta :name)))
           (puthash name (append meta (list :path file :source "project"))
                    skills))))
     (dolist (dir (append (when project-programmatic-dir
                            (list project-programmatic-dir))
-                         ai-agent-claude-programmatic-skill-directories))
+                         agents-claude-programmatic-skill-directories))
       (when (file-directory-p dir)
         (dolist (file (file-expand-wildcards
                        (expand-file-name "*/SKILL.md" dir)))
-          (when-let* ((meta (ai-agent-claude--parse-skill-frontmatter file))
+          (when-let* ((meta (agents-claude--parse-skill-frontmatter file))
                       (name (plist-get meta :name)))
             (puthash name
                      (append meta (list :path file :source "programmatic"))
@@ -1803,7 +1803,7 @@ shadow global skills with the same name."
       (sort result (lambda (a b)
                      (string< (plist-get a :name) (plist-get b :name)))))))
 
-(defun ai-agent-claude--skill-display-result (skill-name result
+(defun agents-claude--skill-display-result (skill-name result
                                                               &optional _buffers-before)
   "Display RESULT plist in a buffer for SKILL-NAME.
 BUFFERS-BEFORE is ignored; results are always written to a
@@ -1835,7 +1835,7 @@ dedicated buffer so unrelated user buffers are never modified."
              (plist-get result :cost))))
 
 ;;;###autoload
-(defun ai-agent-claude-run-skill (skill-name &optional arguments dir)
+(defun agents-claude-run-skill (skill-name &optional arguments dir)
   "Run Claude Code skill SKILL-NAME non-interactively.
 ARGUMENTS is an optional string of arguments appended to the
 skill invocation.  DIR is the working directory for the process;
@@ -1845,7 +1845,7 @@ Interactively, prompts for the skill with completion, then for
 arguments if the skill declares an argument-hint or
 argument-source."
   (interactive
-   (let* ((skills (ai-agent-claude--discover-skills))
+   (let* ((skills (agents-claude--discover-skills))
           (_ (unless skills (user-error "No user-invocable skills found")))
           (max-len (apply #'max (mapcar (lambda (s)
                                           (length (plist-get s :name)))
@@ -1874,7 +1874,7 @@ argument-source."
                           :test #'equal))
           (hint (and skill (plist-get skill :argument-hint)))
           (candidates (and skill
-                           (ai-agent--skill-argument-candidates skill)))
+                           (agents--skill-argument-candidates skill)))
           (default (and skill (plist-get skill :argument-default)))
           (multiple-p (and skill (plist-get skill :argument-multiple)))
           (args (cond
@@ -1900,26 +1900,26 @@ argument-source."
                   (let ((input (read-string (format "Arguments %s: " hint))))
                     (unless (string-empty-p input) input))))))
      (list name args nil)))
-  (let* ((skill (cl-find skill-name (ai-agent-claude--discover-skills)
+  (let* ((skill (cl-find skill-name (agents-claude--discover-skills)
                          :key (lambda (s) (plist-get s :name))
                          :test #'equal))
          (model (or (and skill (plist-get skill :model))
-                    ai-agent-claude-run-skill-model))
-         (prompt (ai-agent-claude--skill-prompt skill skill-name arguments))
+                    agents-claude-run-skill-model))
+         (prompt (agents-claude--skill-prompt skill skill-name arguments))
          (buffers-before (buffer-list)))
     (message "Running /%s%s..." skill-name
              (if (and skill (plist-get skill :model))
                  (format " [%s]" model) ""))
-    (ai-agent-claude--run-prompt
+    (agents-claude--run-prompt
      prompt
      :dir (or dir default-directory)
      :model model
      :callback
      (lambda (result)
-       (ai-agent-claude--skill-display-result
+       (agents-claude--skill-display-result
        skill-name result buffers-before)))))
 
-(defun ai-agent-claude--skill-prompt (skill skill-name arguments)
+(defun agents-claude--skill-prompt (skill skill-name arguments)
   "Return a Claude prompt for SKILL-NAME with ARGUMENTS.
 When SKILL comes from a programmatic-only directory, point Claude
 at the skill file directly instead of using a slash invocation."
@@ -1946,7 +1946,7 @@ at the skill file directly instead of using a slash invocation."
 
 ;;;;; Batch TODO processing
 
-(defun ai-agent-claude--batch-finish (state)
+(defun agents-claude--batch-finish (state)
   "Display the batch processing summary buffer for STATE."
   (let* ((results (sort (plist-get state :results)
                         (lambda (a b)
@@ -1988,72 +1988,72 @@ at the skill file directly instead of using a slash invocation."
 
 ;;;;; Project audit
 
-(defun ai-agent-claude-audit-project ()
+(defun agents-claude-audit-project ()
   "Run a comprehensive audit of a project.
 Prompt the user to select a project directory from
-`ai-agent-claude-audit-project-directories' or enter a new one.
+`agents-claude-audit-project-directories' or enter a new one.
 New directories are persisted to the list for future use.
-Sequentially invokes each skill in `ai-agent-claude-audit-skills'
+Sequentially invokes each skill in `agents-claude-audit-skills'
 with `--accept', each in a separate non-interactive Claude session.
 Results are displayed in a summary buffer when all audits complete."
   (interactive)
-  (let* ((dir (ai-agent-claude--read-audit-project-directory))
+  (let* ((dir (agents-claude--read-audit-project-directory))
          (entries (mapcar (lambda (skill)
                             (list :title (format "%s --accept" skill)
                                   :body ""))
-                          ai-agent-claude-audit-skills)))
+                          agents-claude-audit-skills)))
     (when (yes-or-no-p
            (format "Run %d audit(s) on %s?" (length entries) dir))
-      (ai-agent-claude--batch-start entries dir t))))
+      (agents-claude--batch-start entries dir t))))
 
-(defun ai-agent-claude--read-audit-project-directory ()
+(defun agents-claude--read-audit-project-directory ()
   "Prompt the user for a project directory, with completion.
-Offer `ai-agent-claude-audit-project-directories' as candidates but allow
+Offer `agents-claude-audit-project-directories' as candidates but allow
 free input.  When the entered directory is not already in the list, add it and
 persist via `customize-save-variable'."
   (let* ((candidates (mapcar #'abbreviate-file-name
-                             ai-agent-claude-audit-project-directories))
+                             agents-claude-audit-project-directories))
          (input (completing-read "Project directory: " candidates nil nil))
          (dir (file-truename (expand-file-name input))))
     (unless (file-directory-p dir)
       (user-error "Not a directory: %s" dir))
     (unless (member dir (mapcar #'file-truename
-                                ai-agent-claude-audit-project-directories))
-      (customize-save-variable 'ai-agent-claude-audit-project-directories
-                               (append ai-agent-claude-audit-project-directories
+                                agents-claude-audit-project-directories))
+      (customize-save-variable 'agents-claude-audit-project-directories
+                               (append agents-claude-audit-project-directories
                                        (list dir))))
     dir))
 
 ;;;;; Theme sync
 
-(defun ai-agent-claude--sync-theme (theme)
+(defun agents-claude--sync-theme (theme)
   "Update Claude Code persistent theme settings to THEME.
 THEME is either \"light\" or \"dark\".  Return the number of files
 changed."
   (let ((changed 0))
-    (dolist (path (ai-agent-claude--theme-config-files))
-      (when (ai-agent-claude--write-claude-json-key path "theme" theme)
+    (dolist (path (agents-claude--theme-config-files))
+      (when (agents-claude--write-claude-json-key path "theme" theme)
         (setq changed (1+ changed))))
     changed))
 
-(defun ai-agent-claude--theme-config-files ()
+(defun agents-claude--theme-config-files ()
   "Return Claude Code JSON files that should receive theme sync."
-  (ai-agent-claude--dedupe-existing-files
+  (agents-claude--dedupe-existing-files
    (append
-    (ai-agent-claude--primary-or-existing-files
-     (ai-agent-claude--all-claude-settings-paths))
-    (ai-agent-claude--primary-or-existing-files
-     (ai-agent-claude--all-claude-json-paths)))))
+    (agents-claude--primary-or-existing-files
+     (agents-claude--all-claude-settings-paths))
+    (agents-claude--primary-or-existing-files
+     (agents-claude--all-claude-json-paths)))))
 
-(defun ai-agent-claude--all-claude-settings-paths ()
+(defun agents-claude--all-claude-settings-paths ()
   "Return paths to canonical and account `settings.json' files."
   (cons (expand-file-name "settings.json" "~/.claude/")
         (mapcar (lambda (entry)
                   (expand-file-name "settings.json"
                                     (expand-file-name (cdr entry))))
-                ai-agent-claude-accounts)))
+                agents-claude-accounts)))
 
-(defun ai-agent-claude--primary-or-existing-files (paths)
+(defun agents-claude--primary-or-existing-files (paths)
   "Return the first file from PATHS, plus any other existing files."
   (let ((primary t)
         result)
@@ -2062,7 +2062,7 @@ changed."
         (push path result))
       (setq primary nil))))
 
-(defun ai-agent-claude--dedupe-existing-files (paths)
+(defun agents-claude--dedupe-existing-files (paths)
   "Return PATHS de-duplicated by true name when possible."
   (let (seen result)
     (dolist (path paths (nreverse result))
@@ -2073,70 +2073,70 @@ changed."
           (push key seen)
           (push path result))))))
 
-(defun ai-agent-claude--write-claude-json-key (path key value)
+(defun agents-claude--write-claude-json-key (path key value)
   "Write KEY to VALUE in Claude JSON file PATH if it changed.
 Return non-nil when PATH was written."
   (let ((data (if (file-exists-p path)
-                  (or (ai-agent-claude--read-claude-json path)
+                  (or (agents-claude--read-claude-json path)
                       (error "Invalid JSON in %s" path))
                 (make-hash-table :test #'equal))))
     (unless (equal (gethash key data) value)
       (puthash key value data)
       (make-directory (file-name-directory path) t)
-      (ai-agent-claude--write-claude-json path data)
+      (agents-claude--write-claude-json path data)
       t)))
 
-(defun ai-agent-claude--sync-theme-before-start (&rest _)
+(defun agents-claude--sync-theme-before-start (&rest _)
   "Persist the shared AI theme before starting a Claude Code process."
-  (ai-agent-sync-theme-now)
+  (agents-sync-theme-now)
   nil)
 
 ;;;;; Setup
 
 ;;;###autoload
-(defun ai-agent-claude-setup-config ()
-  "Ensure Claude Code settings contain ai-agent statusline and hooks."
+(defun agents-claude-setup-config ()
+  "Ensure Claude Code settings contain agents statusline and hooks."
   (interactive)
-  (ai-agent-claude-ensure-statusline-config)
-  (ai-agent-claude-ensure-stop-hook-config)
-  (ai-agent-claude-ensure-notification-hook-config)
-  (message "ai-agent-claude: updated %s" ai-agent-claude-settings-file))
+  (agents-claude-ensure-statusline-config)
+  (agents-claude-ensure-stop-hook-config)
+  (agents-claude-ensure-notification-hook-config)
+  (message "agents-claude: updated %s" agents-claude-settings-file))
 
-(defun ai-agent-claude-ensure-statusline-config (&optional file)
+(defun agents-claude-ensure-statusline-config (&optional file)
   "Ensure FILE has a `statusLine' entry.
-FILE defaults to `ai-agent-claude-settings-file'."
+FILE defaults to `agents-claude-settings-file'."
   (interactive)
-  (ai-agent-claude--update-settings
-   (or file ai-agent-claude-settings-file)
-   #'ai-agent-claude--ensure-statusline))
+  (agents-claude--update-settings
+   (or file agents-claude-settings-file)
+   #'agents-claude--ensure-statusline))
 
-(defun ai-agent-claude-ensure-stop-hook-config (&optional file)
+(defun agents-claude-ensure-stop-hook-config (&optional file)
   "Ensure FILE has a Claude Code `Stop' hook.
-FILE defaults to `ai-agent-claude-settings-file'."
+FILE defaults to `agents-claude-settings-file'."
   (interactive)
-  (ai-agent-claude--update-settings
-   (or file ai-agent-claude-settings-file)
-   #'ai-agent-claude--ensure-stop-hook))
+  (agents-claude--update-settings
+   (or file agents-claude-settings-file)
+   #'agents-claude--ensure-stop-hook))
 
-(defun ai-agent-claude-ensure-notification-hook-config (&optional file)
+(defun agents-claude-ensure-notification-hook-config (&optional file)
   "Ensure FILE has a Claude Code `Notification' hook.
-FILE defaults to `ai-agent-claude-settings-file'."
+FILE defaults to `agents-claude-settings-file'."
   (interactive)
-  (ai-agent-claude--update-settings
-   (or file ai-agent-claude-settings-file)
-   #'ai-agent-claude--ensure-notification-hook))
+  (agents-claude--update-settings
+   (or file agents-claude-settings-file)
+   #'agents-claude--ensure-notification-hook))
 
-(defun ai-agent-claude--update-settings (file updater)
+(defun agents-claude--update-settings (file updater)
   "Read JSON settings FILE, apply UPDATER, and write when changed."
-  (let* ((settings (ai-agent-claude--read-json-object file))
+  (let* ((settings (agents-claude--read-json-object file))
          (before (json-serialize settings)))
     (funcall updater settings)
     (unless (equal before (json-serialize settings))
       (make-directory (file-name-directory file) t)
-      (ai-agent-claude--write-claude-json file settings)
+      (agents-claude--write-claude-json file settings)
       t)))
 
-(defun ai-agent-claude--read-json-object (file)
+(defun agents-claude--read-json-object (file)
   "Read FILE as a JSON object, or return an empty object if missing."
   (if (not (file-exists-p file))
       (make-hash-table :test #'equal)
@@ -2147,49 +2147,49 @@ FILE defaults to `ai-agent-claude-settings-file'."
         (error "Expected JSON object in %s" file))
       data)))
 
-(defun ai-agent-claude--ensure-statusline (settings)
-  "Ensure SETTINGS has an ai-agent statusline command."
+(defun agents-claude--ensure-statusline (settings)
+  "Ensure SETTINGS has an agents statusline command."
   (unless (gethash "statusLine" settings)
-    (puthash "statusLine" (ai-agent-claude--statusline-entry) settings)))
+    (puthash "statusLine" (agents-claude--statusline-entry) settings)))
 
-(defun ai-agent-claude--statusline-entry ()
+(defun agents-claude--statusline-entry ()
   "Return the JSON object for the Claude Code statusline command."
-  (ai-agent-claude--require-executable ai-agent-claude-statusline-script)
+  (agents-claude--require-executable agents-claude-statusline-script)
   (let ((entry (make-hash-table :test #'equal)))
     (puthash "type" "command" entry)
-    (puthash "command" (ai-agent-claude--statusline-command) entry)
+    (puthash "command" (agents-claude--statusline-command) entry)
     (puthash "padding" 0 entry)
     entry))
 
-(defun ai-agent-claude--statusline-command ()
+(defun agents-claude--statusline-command ()
   "Return the shell command for the bundled statusline script."
-  (format "AI_AGENT_CLAUDE_STATUS_DIR=%s %s"
+  (format "AGENTS_CLAUDE_STATUS_DIR=%s %s"
           (shell-quote-argument
            (directory-file-name
-            (expand-file-name ai-agent-claude-status-directory)))
-          (shell-quote-argument ai-agent-claude-statusline-script)))
+            (expand-file-name agents-claude-status-directory)))
+          (shell-quote-argument agents-claude-statusline-script)))
 
-(defun ai-agent-claude--ensure-stop-hook (settings)
-  "Ensure SETTINGS has the ai-agent Stop hook."
-  (ai-agent-claude--ensure-hook
-   settings "Stop" (ai-agent-claude--stop-hook-command) nil))
+(defun agents-claude--ensure-stop-hook (settings)
+  "Ensure SETTINGS has the agents Stop hook."
+  (agents-claude--ensure-hook
+   settings "Stop" (agents-claude--stop-hook-command) nil))
 
-(defun ai-agent-claude--ensure-notification-hook (settings)
-  "Ensure SETTINGS has the ai-agent Notification hook."
-  (ai-agent-claude--ensure-hook
-   settings "Notification" (ai-agent-claude--notification-hook-command) 5))
+(defun agents-claude--ensure-notification-hook (settings)
+  "Ensure SETTINGS has the agents Notification hook."
+  (agents-claude--ensure-hook
+   settings "Notification" (agents-claude--notification-hook-command) 5))
 
-(defun ai-agent-claude--ensure-hook (settings name command timeout)
+(defun agents-claude--ensure-hook (settings name command timeout)
   "Ensure SETTINGS hook NAME includes COMMAND with optional TIMEOUT."
-  (let* ((hooks (ai-agent-claude--ensure-hooks settings))
-         (entries (ai-agent-claude--json-list (gethash name hooks))))
-    (unless (ai-agent-claude--hook-command-present-p entries command)
+  (let* ((hooks (agents-claude--ensure-hooks settings))
+         (entries (agents-claude--json-list (gethash name hooks))))
+    (unless (agents-claude--hook-command-present-p entries command)
       (puthash name
                (vconcat entries
-                        (vector (ai-agent-claude--hook-entry command timeout)))
+                        (vector (agents-claude--hook-entry command timeout)))
                hooks))))
 
-(defun ai-agent-claude--ensure-hooks (settings)
+(defun agents-claude--ensure-hooks (settings)
   "Return SETTINGS' `hooks' object, creating it when needed."
   (let ((hooks (gethash "hooks" settings)))
     (unless (hash-table-p hooks)
@@ -2197,14 +2197,14 @@ FILE defaults to `ai-agent-claude-settings-file'."
       (puthash "hooks" hooks settings))
     hooks))
 
-(defun ai-agent-claude--json-list (value)
+(defun agents-claude--json-list (value)
   "Return JSON array VALUE as a list."
   (cond
    ((vectorp value) (append value nil))
    ((listp value) value)
    (t nil)))
 
-(defun ai-agent-claude--hook-command-present-p (entries command)
+(defun agents-claude--hook-command-present-p (entries command)
   "Return non-nil if ENTRIES already contain hook COMMAND."
   (cl-some
    (lambda (entry)
@@ -2212,20 +2212,20 @@ FILE defaults to `ai-agent-claude-settings-file'."
       (lambda (hook)
         (and (hash-table-p hook)
              (equal (gethash "command" hook) command)))
-      (ai-agent-claude--json-list (and (hash-table-p entry)
+      (agents-claude--json-list (and (hash-table-p entry)
                                        (gethash "hooks" entry)))))
    entries))
 
-(defun ai-agent-claude--hook-entry (command &optional timeout)
+(defun agents-claude--hook-entry (command &optional timeout)
   "Return a Claude Code hook entry object for COMMAND.
 TIMEOUT, when non-nil, is written as the hook command timeout."
   (let ((entry (make-hash-table :test #'equal)))
     (puthash "matcher" "" entry)
-    (puthash "hooks" (vector (ai-agent-claude--hook-command command timeout))
+    (puthash "hooks" (vector (agents-claude--hook-command command timeout))
              entry)
     entry))
 
-(defun ai-agent-claude--hook-command (command &optional timeout)
+(defun agents-claude--hook-command (command &optional timeout)
   "Return a Claude Code command hook object for COMMAND.
 TIMEOUT, when non-nil, is written as the hook command timeout."
   (let ((hook (make-hash-table :test #'equal)))
@@ -2235,52 +2235,52 @@ TIMEOUT, when non-nil, is written as the hook command timeout."
       (puthash "timeout" timeout hook))
     hook))
 
-(defun ai-agent-claude--stop-hook-command ()
+(defun agents-claude--stop-hook-command ()
   "Return the command string for the Stop hook."
   (format "%s stop"
-          (shell-quote-argument (ai-agent-claude--hook-wrapper))))
+          (shell-quote-argument (agents-claude--hook-wrapper))))
 
-(defun ai-agent-claude--hook-wrapper ()
+(defun agents-claude--hook-wrapper ()
   "Return a verified path to `claude-code-hook-wrapper'."
-  (ai-agent-claude--require-executable ai-agent-claude-hook-wrapper))
+  (agents-claude--require-executable agents-claude-hook-wrapper))
 
-(defun ai-agent-claude--notification-hook-command ()
+(defun agents-claude--notification-hook-command ()
   "Return the command string for the Notification hook in settings.json."
   (let ((fire-and-forget
          (expand-file-name "fire-and-forget.sh"
-                           ai-agent-claude--hooks-directory))
+                           agents-claude--hooks-directory))
         (notification
          (expand-file-name "notify-emacs-notification.sh"
-                           ai-agent-claude--hooks-directory)))
-    (ai-agent-claude--require-executable fire-and-forget)
-    (ai-agent-claude--require-executable notification)
+                           agents-claude--hooks-directory)))
+    (agents-claude--require-executable fire-and-forget)
+    (agents-claude--require-executable notification)
     (format "%s %s"
             (shell-quote-argument fire-and-forget)
             (shell-quote-argument notification))))
 
-(defun ai-agent-claude--require-executable (file)
+(defun agents-claude--require-executable (file)
   "Return FILE or signal an error if it is not executable."
   (unless (and file (file-executable-p file))
     (error "Executable not found: %s" file))
   file)
 
-(defun ai-agent-claude--has-statusline-key-p ()
+(defun agents-claude--has-statusline-key-p ()
   "Return non-nil if the current buffer has a `statusLine' JSON key."
-  (when-let* ((settings (ai-agent-claude--parse-current-json-object)))
+  (when-let* ((settings (agents-claude--parse-current-json-object)))
     (gethash "statusLine" settings)))
 
-(defun ai-agent-claude--has-stop-hook-p ()
+(defun agents-claude--has-stop-hook-p ()
   "Return non-nil if the current buffer has a `Stop' hook."
-  (when-let* ((settings (ai-agent-claude--parse-current-json-object))
+  (when-let* ((settings (agents-claude--parse-current-json-object))
               (hooks (gethash "hooks" settings)))
     (and (hash-table-p hooks) (gethash "Stop" hooks))))
 
-(defun ai-agent-claude--has-notification-hook-p ()
+(defun agents-claude--has-notification-hook-p ()
   "Return non-nil if the current buffer has a configured Notification hook."
-  (when-let* ((settings (ai-agent-claude--parse-current-json-object))
+  (when-let* ((settings (agents-claude--parse-current-json-object))
               (hooks (gethash "hooks" settings))
               ((hash-table-p hooks))
-              (entries (ai-agent-claude--json-list
+              (entries (agents-claude--json-list
                         (gethash "Notification" hooks))))
     (cl-some
      (lambda (entry)
@@ -2290,10 +2290,10 @@ TIMEOUT, when non-nil, is written as the hook command timeout."
                (string-match-p
                 "notify-emacs-notification"
                 (or (gethash "command" hook) ""))))
-        (ai-agent-claude--json-list (gethash "hooks" entry))))
+        (agents-claude--json-list (gethash "hooks" entry))))
      entries)))
 
-(defun ai-agent-claude--parse-current-json-object ()
+(defun agents-claude--parse-current-json-object ()
   "Parse the current buffer as a JSON object, returning nil on failure."
   (save-excursion
     (goto-char (point-min))
@@ -2309,7 +2309,7 @@ TIMEOUT, when non-nil, is written as the hook command timeout."
   (setq claude-code--window-widths
         (make-hash-table :test 'eq :weakness 'key)))
 
-(defun ai-agent-claude-disable-scrollback-truncation ()
+(defun agents-claude-disable-scrollback-truncation ()
   "Disable eat scrollback truncation in Claude Code buffers.
 The default `eat-term-scrollback-size' of 131072 characters causes the
 buffer to be truncated, losing earlier output."
@@ -2331,9 +2331,9 @@ buffer to be truncated, losing earlier output."
 ;; We fix both by re-including any desynchronized windows and always
 ;; recentering with `(recenter -1)'.
 (advice-add 'claude-code--eat-synchronize-scroll :override
-            #'ai-agent-claude--eat-synchronize-scroll)
+            #'agents-claude--eat-synchronize-scroll)
 
-(defun ai-agent-claude--eat-synchronize-scroll (windows)
+(defun agents-claude--eat-synchronize-scroll (windows)
   "Keep the terminal cursor at the bottom of WINDOWS.
 Re-include any windows showing this buffer that were excluded from
 WINDOWS because their point drifted from the cursor, then
@@ -2354,15 +2354,15 @@ unconditionally recenter with `(recenter -1)'."
 
 ;;;;; Debug backtrace
 
-(defcustom ai-agent-claude-debug-backtrace-model 'gemini-flash-lite-latest
+(defcustom agents-claude-debug-backtrace-model 'gemini-flash-lite-latest
   "GPtel model for identifying candidate packages from a backtrace."
   :type 'symbol
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
-(defcustom ai-agent-claude-debug-backtrace-backend "Gemini"
+(defcustom agents-claude-debug-backtrace-backend "Gemini"
   "GPtel backend name for backtrace analysis."
   :type 'string
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
 (defvar gptel-backend)
 (defvar gptel-model)
@@ -2371,22 +2371,22 @@ unconditionally recenter with `(recenter -1)'."
 (declare-function gptel-request "gptel")
 
 ;;;###autoload
-(defun ai-agent-claude-debug-backtrace ()
+(defun agents-claude-debug-backtrace ()
   "Save the backtrace, choose the offending package, and open Claude Code.
-Save the current backtrace to `ai-agent-backtrace-file', then ask
+Save the current backtrace to `agents-backtrace-file', then ask
 `gptel' to list all packages implicated in the error.  The user
 selects the right one via `completing-read', then an interactive
 Claude Code session starts in that package's source directory with
 the backtrace file path."
   (interactive)
-  (let ((backtrace-file (expand-file-name ai-agent-backtrace-file)))
+  (let ((backtrace-file (expand-file-name agents-backtrace-file)))
     ;; Schedule the identification work to run after the current command.
-    ;; `ai-agent-save-backtrace' kills the *Backtrace* buffer, which exits the
+    ;; `agents-save-backtrace' kills the *Backtrace* buffer, which exits the
     ;; debugger's `recursive-edit' and unwinds this call frame.
-    (run-with-timer 0 nil #'ai-agent-claude--debug-identify-package backtrace-file)
-    (ai-agent-save-backtrace)))
+    (run-with-timer 0 nil #'agents-claude--debug-identify-package backtrace-file)
+    (agents-save-backtrace)))
 
-(defun ai-agent-claude--debug-identify-package (backtrace-file)
+(defun agents-claude--debug-identify-package (backtrace-file)
   "Identify candidate packages from BACKTRACE-FILE and let the user choose.
 Ask a light LLM to list all packages implicated in the backtrace,
 then present the list via `completing-read' so the user can select
@@ -2399,9 +2399,9 @@ the right one before starting a Claude Code session."
   (let ((contents (with-temp-buffer
                     (insert-file-contents backtrace-file)
                     (buffer-string)))
-        (gptel-backend (alist-get ai-agent-claude-debug-backtrace-backend
+        (gptel-backend (alist-get agents-claude-debug-backtrace-backend
                                  gptel--known-backends nil nil #'string=))
-        (gptel-model ai-agent-claude-debug-backtrace-model)
+        (gptel-model agents-claude-debug-backtrace-model)
         (gptel-use-tools nil))
     (gptel-request
      (format "Backtrace file: %s\n\nContents:\n%s" backtrace-file contents)
@@ -2413,16 +2413,16 @@ the right one before starting a Claude Code session."
          (let* ((candidates (mapcar #'string-trim (split-string response ",")))
                 (selected (completing-read "Package to debug: " candidates nil nil nil nil
                                            (car candidates))))
-           (ai-agent-claude--debug-start-session
+           (agents-claude--debug-start-session
             (intern selected) backtrace-file)))))))
 
 (declare-function claude-code--start "claude-code")
 
-(defun ai-agent-claude--debug-start-session (package backtrace-file)
+(defun agents-claude--debug-start-session (package backtrace-file)
   "Start a Claude Code session for PACKAGE with BACKTRACE-FILE.
 Find the elpaca source directory for PACKAGE, start Claude Code
 there with the backtrace prompt passed as a CLI argument."
-  (let* ((dir (or (ai-agent--package-source-directory package)
+  (let* ((dir (or (agents--package-source-directory package)
                   (user-error "Package `%s' not found" package)))
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
@@ -2431,74 +2431,74 @@ there with the backtrace prompt passed as a CLI argument."
       (claude-code--start nil (list prompt) nil t))))
 
 (setq claude-code-notification-function #'claude-code-default-notification)
-(add-hook 'claude-code-event-hook #'ai-agent-claude--handle-notification)
-(add-hook 'claude-code-event-hook #'ai-agent-claude--handle-stop)
-(add-hook 'kill-buffer-query-functions #'ai-agent-protect-buffer)
-(add-hook 'claude-code-start-hook #'ai-agent-claude-setup-kill-on-exit)
-(add-hook 'claude-code-start-hook #'ai-agent-claude-start-status-polling)
-(add-hook 'claude-code-start-hook #'ai-agent-claude--capture-buffer-account)
-(add-hook 'claude-code-start-hook #'ai-agent-claude-set-modeline)
-(add-hook 'claude-code-start-hook #'ai-agent--refresh-display-names)
-(add-hook 'kill-buffer-hook #'ai-agent-claude-stop-status-polling)
-(add-hook 'kill-buffer-hook #'ai-agent--refresh-display-names-deferred)
-(add-hook 'kill-buffer-hook #'ai-agent-claude--cleanup-monet-session)
-(add-hook 'claude-code-start-hook #'ai-agent-disable-scrollback-truncation)
-(add-hook 'claude-code-start-hook #'ai-agent-setup-snippet-keys)
-(add-hook 'claude-code-start-hook #'ai-agent--assign-session-key)
+(add-hook 'claude-code-event-hook #'agents-claude--handle-notification)
+(add-hook 'claude-code-event-hook #'agents-claude--handle-stop)
+(add-hook 'kill-buffer-query-functions #'agents-protect-buffer)
+(add-hook 'claude-code-start-hook #'agents-claude-setup-kill-on-exit)
+(add-hook 'claude-code-start-hook #'agents-claude-start-status-polling)
+(add-hook 'claude-code-start-hook #'agents-claude--capture-buffer-account)
+(add-hook 'claude-code-start-hook #'agents-claude-set-modeline)
+(add-hook 'claude-code-start-hook #'agents--refresh-display-names)
+(add-hook 'kill-buffer-hook #'agents-claude-stop-status-polling)
+(add-hook 'kill-buffer-hook #'agents--refresh-display-names-deferred)
+(add-hook 'kill-buffer-hook #'agents-claude--cleanup-monet-session)
+(add-hook 'claude-code-start-hook #'agents-disable-scrollback-truncation)
+(add-hook 'claude-code-start-hook #'agents-setup-snippet-keys)
+(add-hook 'claude-code-start-hook #'agents--assign-session-key)
 (add-hook 'claude-code-process-environment-functions
-          #'ai-agent-claude--sync-theme-before-start)
-(add-hook 'kill-buffer-hook #'ai-agent--release-session-key)
+          #'agents-claude--sync-theme-before-start)
+(add-hook 'kill-buffer-hook #'agents--release-session-key)
 (advice-add 'claude-code--eat-send-return :before
-            #'ai-agent--clear-waiting-for-input)
+            #'agents--clear-waiting-for-input)
 (advice-add 'claude-code--vterm-send-return :before
-            #'ai-agent--clear-waiting-for-input)
+            #'agents--clear-waiting-for-input)
 (advice-add 'claude-code--do-send-command :before
-            #'ai-agent--clear-waiting-for-input)
+            #'agents--clear-waiting-for-input)
 
 ;;;;; Handoff
 
-(defcustom ai-agent-claude-handoff-file
+(defcustom agents-claude-handoff-file
   (expand-file-name "claude-code-handoff.md" temporary-file-directory)
   "Path to the handoff file written by the `/handoff' skill."
   :type 'file
-  :group 'ai-agent-claude)
+  :group 'agents-claude)
 
 ;;;###autoload
-(defun ai-agent-claude-handoff (&optional buffer-name)
+(defun agents-claude-handoff (&optional buffer-name)
   "Close this Claude session and start a new one with the handoff prompt.
 The `/handoff' skill must have been run first to write the handoff
 file.  The new session starts in the same project directory with
 the handoff contents passed as a CLI argument."
   (interactive)
-  (unless (file-exists-p ai-agent-claude-handoff-file)
+  (unless (file-exists-p agents-claude-handoff-file)
     (user-error "No handoff file at %s — run /handoff first"
-                ai-agent-claude-handoff-file))
-  (let* ((prompt (ai-agent-claude--read-handoff-file))
-         (source-buffer (ai-agent-claude--handoff-source-buffer buffer-name))
-         (dir (ai-agent-claude--handoff-directory source-buffer)))
+                agents-claude-handoff-file))
+  (let* ((prompt (agents-claude--read-handoff-file))
+         (source-buffer (agents-claude--handoff-source-buffer buffer-name))
+         (dir (agents-claude--handoff-directory source-buffer)))
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty — run /handoff first"))
     (when source-buffer
-      (ai-agent--force-kill-buffer source-buffer))
+      (agents--force-kill-buffer source-buffer))
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))
       (claude-code--start nil (list prompt) nil t))))
 
-(defun ai-agent-claude-handoff-from-emacsclient ()
-  "Run `ai-agent-claude-handoff' for the client-provided buffer name.
+(defun agents-claude-handoff-from-emacsclient ()
+  "Run `agents-claude-handoff' for the client-provided buffer name.
 The first value in `server-eval-args-left' is treated as the
 Claude buffer that requested the handoff."
   (interactive)
   (let ((buffer-name (car server-eval-args-left)))
     (setq server-eval-args-left nil)
-    (ai-agent-claude-handoff buffer-name)))
+    (agents-claude-handoff buffer-name)))
 
-(defun ai-agent-claude--read-handoff-file ()
+(defun agents-claude--read-handoff-file ()
   "Read and return the trimmed contents of the handoff file."
   (with-temp-buffer
-    (insert-file-contents ai-agent-claude-handoff-file)
+    (insert-file-contents agents-claude-handoff-file)
     (string-trim (buffer-string))))
 
-(defun ai-agent-claude--handoff-source-buffer (buffer-name)
+(defun agents-claude--handoff-source-buffer (buffer-name)
   "Return the Claude source buffer named BUFFER-NAME, or current buffer."
   (cond
    ((and buffer-name (not (string-empty-p buffer-name)))
@@ -2511,7 +2511,7 @@ Claude buffer that requested the handoff."
    ((claude-code--buffer-p (current-buffer))
     (current-buffer))))
 
-(defun ai-agent-claude--handoff-directory (source-buffer)
+(defun agents-claude--handoff-directory (source-buffer)
   "Return the project directory for SOURCE-BUFFER or fallback context."
   (if source-buffer
       (buffer-local-value 'default-directory source-buffer)
@@ -2520,24 +2520,24 @@ Claude buffer that requested the handoff."
 ;;;;; Restart
 
 ;;;###autoload
-(defun ai-agent-claude-restart ()
+(defun agents-claude-restart ()
   "Kill the current Claude session and resume it in place.
 Useful when a setting change requires relaunching Claude.  Preserves the
 session's directory and instance name, and uses the currently active
-account (from `ai-agent-claude-accounts'), so the result is
+account (from `agents-claude-accounts'), so the result is
 equivalent to manually closing the session and reopening it."
   (interactive)
   (unless (claude-code--buffer-p (current-buffer))
     (user-error "Not in a Claude buffer"))
-  (let* ((account (ai-agent-claude--resolve-account))
-         (ai-agent-claude--pending-account account)
-         (session-id (ai-agent-claude--current-session-id))
+  (let* ((account (agents-claude--resolve-account))
+         (agents-claude--pending-account account)
+         (session-id (agents-claude--current-session-id))
          (dir default-directory)
          (instance-name (claude-code--extract-instance-name-from-buffer-name
                          (buffer-name))))
     (when account
-      (ai-agent-claude--sync-account-config account))
-    (ai-agent-claude--kill-current-claude-buffer)
+      (agents-claude--sync-account-config account))
+    (agents-claude--kill-current-claude-buffer)
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir))
               ((symbol-function 'claude-code--prompt-for-instance-name)
                (lambda (_dir _existing _force) instance-name)))
@@ -2547,7 +2547,7 @@ equivalent to manually closing the session and reopening it."
 
 (require 'iso8601)
 
-(defun ai-agent-claude--read-session-header (jsonl-file)
+(defun agents-claude--read-session-header (jsonl-file)
   "Read first line of JSONL-FILE and return a lightweight metadata plist.
 Returns (:session-id :forked-from :fork-uuid :file-path) or nil.
 This is fast (reads only first few KB) and is used for the initial
@@ -2567,7 +2567,7 @@ scan to build the branch tree."
                 :file-path jsonl-file)))
     (error nil)))
 
-(defun ai-agent-claude--read-session-prompt (header)
+(defun agents-claude--read-session-prompt (header)
   "Enrich HEADER plist with :first-prompt and :timestamp.
 Reads the full JSONL file referenced by HEADER's :file-path."
   (let ((file (plist-get header :file-path))
@@ -2580,15 +2580,15 @@ Reads the full JSONL file referenced by HEADER's :file-path."
             (insert-file-contents file))
           (goto-char (point-min))
           (if fork-uuid
-              (ai-agent-claude--branch-prompt
+              (agents-claude--branch-prompt
                session-id forked-from fork-uuid)
-            (ai-agent-claude--root-prompt session-id)))
+            (agents-claude--root-prompt session-id)))
       (error (list :session-id session-id
                    :forked-from forked-from
                    :first-prompt "(error reading session)"
                    :timestamp nil)))))
 
-(defun ai-agent-claude--user-message-prompt-p (json)
+(defun agents-claude--user-message-prompt-p (json)
   "Return non-nil if JSON is a user message with text content."
   (and (equal (plist-get json :type) "user")
        (let* ((msg (plist-get json :message))
@@ -2596,34 +2596,34 @@ Reads the full JSONL file referenced by HEADER's :file-path."
          (and (stringp content)
               (not (string-empty-p (string-trim content)))))))
 
-(defun ai-agent-claude--root-prompt (session-id)
+(defun agents-claude--root-prompt (session-id)
   "Find the first user prompt in the current buffer for SESSION-ID."
   (goto-char (point-min))
   (let ((result nil))
     (while (and (not result) (not (eobp)))
-      (let ((json (ai-agent-claude--parse-jsonl-line)))
-        (when (and json (ai-agent-claude--user-message-prompt-p json))
-          (setq result (ai-agent-claude--meta-from-json
+      (let ((json (agents-claude--parse-jsonl-line)))
+        (when (and json (agents-claude--user-message-prompt-p json))
+          (setq result (agents-claude--meta-from-json
                         session-id nil json))))
       (forward-line 1))
     (or result
         (list :session-id session-id :forked-from nil
               :first-prompt "(no prompt)" :timestamp nil))))
 
-(defun ai-agent-claude--branch-prompt (session-id forked-from fork-uuid)
+(defun agents-claude--branch-prompt (session-id forked-from fork-uuid)
   "Find the first new user prompt after FORK-UUID in the current buffer.
 SESSION-ID and FORKED-FROM are passed through to the result."
   (goto-char (point-min))
   (let ((found-fork nil)
         (result nil))
     (while (and (not result) (not (eobp)))
-      (let ((json (ai-agent-claude--parse-jsonl-line)))
+      (let ((json (agents-claude--parse-jsonl-line)))
         (when json
           (if (not found-fork)
               (when (string= (plist-get json :uuid) fork-uuid)
                 (setq found-fork t))
-            (when (ai-agent-claude--user-message-prompt-p json)
-              (setq result (ai-agent-claude--meta-from-json
+            (when (agents-claude--user-message-prompt-p json)
+              (setq result (agents-claude--meta-from-json
                             session-id forked-from json))))))
       (forward-line 1))
     (or result
@@ -2632,7 +2632,7 @@ SESSION-ID and FORKED-FROM are passed through to the result."
               :first-prompt "(branch)"
               :timestamp nil))))
 
-(defun ai-agent-claude--parse-jsonl-line ()
+(defun agents-claude--parse-jsonl-line ()
   "Parse the current line as JSON, returning a plist or nil."
   (let ((line (buffer-substring-no-properties
                (line-beginning-position) (line-end-position))))
@@ -2641,16 +2641,16 @@ SESSION-ID and FORKED-FROM are passed through to the result."
           (json-parse-string line :object-type 'plist)
         (error nil)))))
 
-(defun ai-agent-claude--meta-from-json (session-id forked-from json)
+(defun agents-claude--meta-from-json (session-id forked-from json)
   "Build metadata plist from SESSION-ID, FORKED-FROM id, and message JSON."
   (let* ((msg (plist-get json :message))
          (content (when msg (plist-get msg :content))))
     (list :session-id session-id
           :forked-from forked-from
-          :first-prompt (ai-agent-claude--truncate-prompt content)
+          :first-prompt (agents-claude--truncate-prompt content)
           :timestamp (plist-get json :timestamp))))
 
-(defun ai-agent-claude--truncate-prompt (content)
+(defun agents-claude--truncate-prompt (content)
   "Truncate CONTENT to a short display string."
   (if (stringp content)
       (truncate-string-to-width
@@ -2658,18 +2658,18 @@ SESSION-ID and FORKED-FROM are passed through to the result."
        60 nil nil "…")
     "(no prompt)"))
 
-(defun ai-agent-claude--scan-session-headers (project-dir)
+(defun agents-claude--scan-session-headers (project-dir)
   "Scan JSONL files in PROJECT-DIR and return session headers.
 Returns a hash table mapping session ID to a lightweight header
 plist.  Only reads the first line of each file (fast)."
   (let ((table (make-hash-table :test 'equal)))
     (dolist (file (directory-files project-dir t "\\.jsonl\\'"))
-      (let ((header (ai-agent-claude--read-session-header file)))
+      (let ((header (agents-claude--read-session-header file)))
         (when (and header (plist-get header :session-id))
           (puthash (plist-get header :session-id) header table))))
     table))
 
-(defun ai-agent-claude--enrich-sessions (headers member-ids)
+(defun agents-claude--enrich-sessions (headers member-ids)
   "Enrich session HEADERS with full prompt text for MEMBER-IDS.
 HEADERS is a hash table of session ID to header plist.  MEMBER-IDS
 is a hash table of session IDs to include.  Return a new hash table
@@ -2677,12 +2677,12 @@ with :first-prompt and :timestamp populated."
   (let ((table (make-hash-table :test 'equal)))
     (maphash (lambda (id header)
                (when (gethash id member-ids)
-                 (puthash id (ai-agent-claude--read-session-prompt header)
+                 (puthash id (agents-claude--read-session-prompt header)
                           table)))
              headers)
     table))
 
-(defun ai-agent-claude--find-branch-root (session-id sessions)
+(defun agents-claude--find-branch-root (session-id sessions)
   "Follow forkedFrom chain from SESSION-ID upward in SESSIONS hash table.
 Returns the root session ID."
   (let ((current session-id)
@@ -2696,7 +2696,7 @@ Returns the root session ID."
               (setq current parent)
             (throw 'done current)))))))
 
-(defun ai-agent-claude--build-children-map (sessions)
+(defun agents-claude--build-children-map (sessions)
   "Build hash table mapping parent session ID to sorted list of child IDs.
 SESSIONS is a hash table of session ID to metadata.  Children are
 sorted by timestamp."
@@ -2717,7 +2717,7 @@ sorted by timestamp."
              map)
     map))
 
-(defun ai-agent-claude--collect-tree-members (root-id children-map)
+(defun agents-claude--collect-tree-members (root-id children-map)
   "Return hash table of all session IDs reachable from ROOT-ID via CHILDREN-MAP."
   (let ((members (make-hash-table :test 'equal))
         (queue (list root-id)))
@@ -2729,7 +2729,7 @@ sorted by timestamp."
             (push child queue)))))
     members))
 
-(defun ai-agent-claude--format-branch-timestamp (iso-ts)
+(defun agents-claude--format-branch-timestamp (iso-ts)
   "Format ISO-TS as \"Mon DD HH:MM\" for branch display."
   (when iso-ts
     (condition-case nil
@@ -2737,15 +2737,15 @@ sorted by timestamp."
                             (encode-time (iso8601-parse iso-ts)))
       (error (substring iso-ts 0 (min 16 (length iso-ts)))))))
 
-(defun ai-agent-claude--format-branch-tree (root-id sessions children-map current-id)
+(defun agents-claude--format-branch-tree (root-id sessions children-map current-id)
   "Format the branch tree rooted at ROOT-ID as an alist.
 SESSIONS maps IDs to metadata, CHILDREN-MAP maps parent to child
 IDs, CURRENT-ID is the active session.  Returns an alist of
 \(display-string . session-id)."
-  (ai-agent-claude--format-branch-subtree
+  (agents-claude--format-branch-subtree
    root-id sessions children-map current-id "" ""))
 
-(defun ai-agent-claude--format-branch-subtree
+(defun agents-claude--format-branch-subtree
     (id sessions children-map current-id prefix child-prefix)
   "Format branch node ID and its children recursively.
 SESSIONS maps IDs to metadata, CHILDREN-MAP maps parent to child
@@ -2754,7 +2754,7 @@ for this node, CHILD-PREFIX is the continuation for children.
 Return a list of (display . session-id)."
   (let* ((meta (gethash id sessions))
          (prompt (or (plist-get meta :first-prompt) "(no prompt)"))
-         (ts (ai-agent-claude--format-branch-timestamp
+         (ts (agents-claude--format-branch-timestamp
               (plist-get meta :timestamp)))
          (marker (if (string= id current-id) " *" ""))
          (display (format "%s%s  %s%s" prefix prompt (or ts "") marker))
@@ -2766,32 +2766,32 @@ Return a list of (display . session-id)."
              for last-p = (= i (1- len))
              do (setq result
                       (nconc result
-                             (ai-agent-claude--format-branch-subtree
+                             (agents-claude--format-branch-subtree
                               child sessions children-map current-id
                               (concat child-prefix (if last-p "└─ " "├─ "))
                               (concat child-prefix (if last-p "   " "│  "))))))
     result))
 
-(defun ai-agent-claude--find-buffer-for-session (session-id)
+(defun agents-claude--find-buffer-for-session (session-id)
   "Return a live Claude buffer whose session matches SESSION-ID, or nil."
   (cl-find-if
    (lambda (buf)
      (when (buffer-live-p buf)
        (with-current-buffer buf
-         (let ((status (ai-agent-claude--parse-status-file)))
+         (let ((status (agents-claude--parse-status-file)))
            (and status
                 (string= (plist-get status :session_id) session-id))))))
    (claude-code--find-all-claude-buffers)))
 
 ;;;###autoload
-(defun ai-agent-claude-switch-branch ()
+(defun agents-claude-switch-branch ()
   "Navigate between branches of the current Claude session.
 Shows a tree of all sessions related by branching and lets you
 select one to switch to or resume."
   (interactive)
   (unless (claude-code--buffer-p (current-buffer))
     (user-error "Not in a Claude buffer"))
-  (let ((status (ai-agent-claude--parse-status-file)))
+  (let ((status (agents-claude--parse-status-file)))
     (unless status
       (user-error "No status file; is status polling enabled?"))
     (let ((session-id (plist-get status :session_id))
@@ -2799,15 +2799,15 @@ select one to switch to or resume."
       (unless (and session-id transcript)
         (user-error "Status file missing session_id or transcript_path"))
       (let* ((project-dir (file-name-directory transcript))
-             (headers (ai-agent-claude--scan-session-headers project-dir))
-             (children-map (ai-agent-claude--build-children-map headers))
-             (root-id (ai-agent-claude--find-branch-root session-id headers))
-             (members (ai-agent-claude--collect-tree-members root-id children-map)))
+             (headers (agents-claude--scan-session-headers project-dir))
+             (children-map (agents-claude--build-children-map headers))
+             (root-id (agents-claude--find-branch-root session-id headers))
+             (members (agents-claude--collect-tree-members root-id children-map)))
         (when (<= (hash-table-count members) 1)
           (user-error "No branches for this session"))
-        (let* ((sessions (ai-agent-claude--enrich-sessions headers members))
-               (tree-children (ai-agent-claude--build-children-map sessions))
-               (tree (ai-agent-claude--format-branch-tree
+        (let* ((sessions (agents-claude--enrich-sessions headers members))
+               (tree-children (agents-claude--build-children-map sessions))
+               (tree (agents-claude--format-branch-tree
                       root-id sessions tree-children session-id))
                (selection (consult--read
                            (mapcar #'car tree)
@@ -2818,13 +2818,13 @@ select one to switch to or resume."
           (cond
            ((string= selected-id session-id)
             (message "Already on this session"))
-           ((ai-agent-claude--find-buffer-for-session selected-id)
+           ((agents-claude--find-buffer-for-session selected-id)
             (switch-to-buffer
-             (ai-agent-claude--find-buffer-for-session selected-id)))
+             (agents-claude--find-buffer-for-session selected-id)))
            (t
-            (ai-agent-claude--resume-session selected-id))))))))
+            (agents-claude--resume-session selected-id))))))))
 
-(defun ai-agent-claude--resume-session (session-id)
+(defun agents-claude--resume-session (session-id)
   "Resume SESSION-ID in a new Claude buffer.
 Auto-generates an instance name from the session ID to avoid the
 interactive instance-name prompt."
@@ -2834,7 +2834,7 @@ interactive instance-name prompt."
     (claude-code--start nil (list "--resume" session-id) nil t)))
 
 ;;;###autoload
-(defun ai-agent-claude-create-branch (&optional isolated)
+(defun agents-claude-create-branch (&optional isolated)
   "Create a branch of the current Claude session and switch to it.
 Forks the current session via `--resume --fork-session' and opens
 the new branch in a separate buffer.  By default the fork shares
@@ -2842,7 +2842,7 @@ the parent's working tree, matching the behavior of launching a
 second Claude instance in the same project.
 
 With prefix arg ISOLATED, also create a git worktree on a fresh
-branch under `ai-agent-claude-fork-worktree-directory' and run
+branch under `agents-claude-fork-worktree-directory' and run
 the fork inside it.  The worktree starts at the parent's HEAD,
 so uncommitted parent changes are NOT carried over.  Use this
 when concurrent destructive git operations across forks are a
@@ -2850,16 +2850,16 @@ concern; otherwise the default is what you want."
   (interactive "P")
   (unless (claude-code--buffer-p (current-buffer))
     (user-error "Not in a Claude buffer"))
-  (let* ((session-id (ai-agent-claude--current-session-id))
+  (let* ((session-id (agents-claude--current-session-id))
          (parent-cwd default-directory)
          (fork-id (format-time-string "%H%M%S"))
          (worktree (and isolated
-                        (ai-agent-claude--make-fork-worktree
-                         (or (ai-agent-claude--git-toplevel)
+                        (agents-claude--make-fork-worktree
+                         (or (agents-claude--git-toplevel)
                              (user-error "Not in a git repo; cannot isolate"))
                          fork-id))))
     (when worktree
-      (ai-agent-claude--link-session-into-project
+      (agents-claude--link-session-into-project
        session-id parent-cwd (car worktree)))
     (cl-letf (((symbol-function 'claude-code--prompt-for-instance-name)
                (lambda (_dir _existing _force)
@@ -2872,7 +2872,7 @@ concern; otherwise the default is what you want."
       (message "Forked in worktree %s on branch %s"
                (car worktree) (cdr worktree)))))
 
-(defun ai-agent-claude--git-toplevel (&optional dir)
+(defun agents-claude--git-toplevel (&optional dir)
   "Return git toplevel for DIR (or `default-directory'), or nil if none."
   (let ((default-directory (or dir default-directory)))
     (with-temp-buffer
@@ -2880,7 +2880,7 @@ concern; otherwise the default is what you want."
                                  "rev-parse" "--show-toplevel"))
         (file-name-as-directory (string-trim (buffer-string)))))))
 
-(defun ai-agent-claude--make-fork-worktree (toplevel fork-id)
+(defun agents-claude--make-fork-worktree (toplevel fork-id)
   "Create a git worktree of TOPLEVEL identified by FORK-ID.
 Returns a cons (PATH . BRANCH-NAME).  Signals an error on failure."
   (let* ((repo-name (file-name-nondirectory (directory-file-name toplevel)))
@@ -2888,12 +2888,12 @@ Returns a cons (PATH . BRANCH-NAME).  Signals an error on failure."
          (worktree-path (file-name-as-directory
                          (expand-file-name
                           (format "%s-fork-%s" repo-name fork-id)
-                          ai-agent-claude-fork-worktree-directory))))
-    (make-directory ai-agent-claude-fork-worktree-directory t)
-    (ai-agent-claude--git-worktree-add toplevel branch-name worktree-path)
+                          agents-claude-fork-worktree-directory))))
+    (make-directory agents-claude-fork-worktree-directory t)
+    (agents-claude--git-worktree-add toplevel branch-name worktree-path)
     (cons worktree-path branch-name)))
 
-(defun ai-agent-claude--git-worktree-add (toplevel branch-name worktree-path)
+(defun agents-claude--git-worktree-add (toplevel branch-name worktree-path)
   "Run `git worktree add' in TOPLEVEL for BRANCH-NAME at WORKTREE-PATH."
   (let ((default-directory toplevel))
     (with-temp-buffer
@@ -2904,7 +2904,7 @@ Returns a cons (PATH . BRANCH-NAME).  Signals an error on failure."
           (error "git worktree add failed: %s"
                  (string-trim (buffer-string))))))))
 
-(defun ai-agent-claude--link-session-into-project (session-id source-cwd target-cwd)
+(defun agents-claude--link-session-into-project (session-id source-cwd target-cwd)
   "Symlink SESSION-ID's JSONL from SOURCE-CWD's project dir into TARGET-CWD's.
 Lets `--resume SESSION-ID' find the session when the CLI runs from
 TARGET-CWD instead of SOURCE-CWD, since Claude Code stores sessions
@@ -2912,8 +2912,8 @@ under `~/.claude/projects/<encoded-cwd>/'."
   (let* ((filename (concat session-id ".jsonl"))
          (src (expand-file-name
                filename
-               (ai-agent-claude--project-dir-for source-cwd)))
-         (dst-dir (ai-agent-claude--project-dir-for target-cwd))
+               (agents-claude--project-dir-for source-cwd)))
+         (dst-dir (agents-claude--project-dir-for target-cwd))
          (dst (expand-file-name filename dst-dir)))
     (unless (file-exists-p src)
       (error "Session JSONL not found: %s" src))
@@ -2921,21 +2921,21 @@ under `~/.claude/projects/<encoded-cwd>/'."
     (unless (file-exists-p dst)
       (make-symbolic-link src dst))))
 
-(defun ai-agent-claude--project-dir-for (cwd)
+(defun agents-claude--project-dir-for (cwd)
   "Return the `~/.claude/projects/' directory that Claude Code uses for CWD."
-  (expand-file-name (ai-agent-claude--encode-project-cwd cwd)
+  (expand-file-name (agents-claude--encode-project-cwd cwd)
                     "~/.claude/projects/"))
 
-(defun ai-agent-claude--encode-project-cwd (path)
+(defun agents-claude--encode-project-cwd (path)
   "Encode PATH the way Claude Code names dirs under `~/.claude/projects/'."
   (replace-regexp-in-string
    "[^A-Za-z0-9-]" "-"
    (directory-file-name (expand-file-name path))))
 
-(defun ai-agent-claude--current-session-id ()
+(defun agents-claude--current-session-id ()
   "Return the session ID of the current Claude buffer.
 Signals an error if the status file is missing or incomplete."
-  (let ((status (ai-agent-claude--parse-status-file)))
+  (let ((status (agents-claude--parse-status-file)))
     (unless status
       (user-error "No status file; is status polling enabled?"))
     (or (plist-get status :session_id)
@@ -2943,92 +2943,92 @@ Signals an error if the status file is missing or incomplete."
 
 ;;;; Extend unified menu
 
-(transient-define-infix ai-agent-claude--infix-warn-kill-with-branches ()
-  "Toggle `ai-agent-claude-warn-kill-with-branches'."
-  :class 'ai-agent--boolean-variable
-  :variable 'ai-agent-claude-warn-kill-with-branches
+(transient-define-infix agents-claude--infix-warn-kill-with-branches ()
+  "Toggle `agents-claude-warn-kill-with-branches'."
+  :class 'agents--boolean-variable
+  :variable 'agents-claude-warn-kill-with-branches
   :description "warn kill with branches")
 
 (eval-and-compile
-  (defclass ai-agent-claude--account-variable (transient-lisp-variable)
+  (defclass agents-claude--account-variable (transient-lisp-variable)
     ()
     "An infix that displays and selects the active Claude account."))
 
-(cl-defmethod transient-infix-read ((_obj ai-agent-claude--account-variable))
+(cl-defmethod transient-infix-read ((_obj agents-claude--account-variable))
   "Prompt for a Claude account."
-  (ai-agent-claude--prompt-account))
+  (agents-claude--prompt-account))
 
-(cl-defmethod transient-infix-set ((obj ai-agent-claude--account-variable) value)
+(cl-defmethod transient-infix-set ((obj agents-claude--account-variable) value)
   "Set the account variable and persist VALUE to disk."
   (cl-call-next-method obj value)
   (when value
-    (ai-agent-claude--save-account value)
-    (ai-agent-claude--sync-account-config value)))
+    (agents-claude--save-account value)
+    (agents-claude--sync-account-config value)))
 
-(cl-defmethod transient-init-value ((obj ai-agent-claude--account-variable))
+(cl-defmethod transient-init-value ((obj agents-claude--account-variable))
   "Initialize OBJ from disk if the variable is nil."
   (unless (symbol-value (oref obj variable))
-    (set (oref obj variable) (ai-agent-claude--load-account)))
+    (set (oref obj variable) (agents-claude--load-account)))
   (cl-call-next-method obj))
 
-(transient-define-infix ai-agent-claude--infix-account ()
+(transient-define-infix agents-claude--infix-account ()
   "Select the active Claude account."
-  :class 'ai-agent-claude--account-variable
-  :variable 'ai-agent-claude--current-account
+  :class 'agents-claude--account-variable
+  :variable 'agents-claude--current-account
   :description "claude account")
 
-(defun ai-agent-claude-agent-log-menu ()
+(defun agents-claude-agent-log-menu ()
   "Open the optional `agent-log' menu."
   (interactive)
   (unless (require 'agent-log nil t)
     (user-error "Package `agent-log' is required for log browsing"))
   (call-interactively #'agent-log-menu))
 
-(defun ai-agent-claude--remove-menu-suffixes ()
+(defun agents-claude--remove-menu-suffixes ()
   "Remove Claude menu suffixes before appending them."
-  (dolist (command '(ai-agent-claude-switch-branch
-                     ai-agent-claude-create-branch
-                     ai-agent-claude-batch-todos
-                     ai-agent-claude-send-todo-at-point
-                     ai-agent-claude-agent-log-menu
-                     ai-agent-claude-start-status-polling
-                     ai-agent-claude-stop-status-polling
-                     ai-agent-claude--infix-account
+  (dolist (command '(agents-claude-switch-branch
+                     agents-claude-create-branch
+                     agents-claude-batch-todos
+                     agents-claude-send-todo-at-point
+                     agents-claude-agent-log-menu
+                     agents-claude-start-status-polling
+                     agents-claude-stop-status-polling
+                     agents-claude--infix-account
                      "-c"
-                     ai-agent-claude--infix-warn-kill-with-branches))
+                     agents-claude--infix-warn-kill-with-branches))
     (while (ignore-errors
-             (transient-get-suffix 'ai-agent-menu command)
+             (transient-get-suffix 'agents-menu command)
              t)
-      (transient-remove-suffix 'ai-agent-menu command))))
+      (transient-remove-suffix 'agents-menu command))))
 
-(defun ai-agent-claude--append-menu-suffixes ()
-  "Append Claude suffixes to `ai-agent-menu' in a stable order."
-  (ai-agent-claude--remove-menu-suffixes)
+(defun agents-claude--append-menu-suffixes ()
+  "Append Claude suffixes to `agents-menu' in a stable order."
+  (agents-claude--remove-menu-suffixes)
   ;; Sessions: after "exit session"
-  (transient-append-suffix 'ai-agent-menu "x"
-    '("B" "switch branch" ai-agent-claude-switch-branch))
-  (transient-append-suffix 'ai-agent-menu "B"
-    '("N" "new branch" ai-agent-claude-create-branch))
+  (transient-append-suffix 'agents-menu "x"
+    '("B" "switch branch" agents-claude-switch-branch))
+  (transient-append-suffix 'agents-menu "B"
+    '("N" "new branch" agents-claude-create-branch))
   ;; Tools: after "debug backtrace"
-  (transient-append-suffix 'ai-agent-menu "d"
-    '("b" "batch todos" ai-agent-claude-batch-todos))
-  (transient-append-suffix 'ai-agent-menu "b"
-    '("t" "send todo at point" ai-agent-claude-send-todo-at-point))
-  (transient-append-suffix 'ai-agent-menu "t"
-    '("l" "logs" ai-agent-claude-agent-log-menu))
+  (transient-append-suffix 'agents-menu "d"
+    '("b" "batch todos" agents-claude-batch-todos))
+  (transient-append-suffix 'agents-menu "b"
+    '("t" "send todo at point" agents-claude-send-todo-at-point))
+  (transient-append-suffix 'agents-menu "t"
+    '("l" "logs" agents-claude-agent-log-menu))
   ;; Alerts: after "toggle alert"
-  (transient-append-suffix 'ai-agent-menu "T"
-    '("p" "start status polling" ai-agent-claude-start-status-polling))
-  (transient-append-suffix 'ai-agent-menu "p"
-    '("P" "stop status polling" ai-agent-claude-stop-status-polling))
+  (transient-append-suffix 'agents-menu "T"
+    '("p" "start status polling" agents-claude-start-status-polling))
+  (transient-append-suffix 'agents-menu "p"
+    '("P" "stop status polling" agents-claude-stop-status-polling))
   ;; Options: after "protect buffers"
-  (transient-append-suffix 'ai-agent-menu "-p"
-    '("-c" ai-agent-claude--infix-account))
-  (transient-append-suffix 'ai-agent-menu "-c"
-    '("-w" ai-agent-claude--infix-warn-kill-with-branches)))
+  (transient-append-suffix 'agents-menu "-p"
+    '("-c" agents-claude--infix-account))
+  (transient-append-suffix 'agents-menu "-c"
+    '("-w" agents-claude--infix-warn-kill-with-branches)))
 
-(with-eval-after-load 'ai-agent
-  (ai-agent-claude--append-menu-suffixes))
+(with-eval-after-load 'agents
+  (agents-claude--append-menu-suffixes))
 
-(provide 'ai-agent-claude)
-;;; ai-agent-claude.el ends here
+(provide 'agents-claude)
+;;; agents-claude.el ends here
