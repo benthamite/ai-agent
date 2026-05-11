@@ -1,42 +1,42 @@
-;;; agents-codex-test.el --- Tests for agents-codex -*- lexical-binding: t -*-
+;;; agent-codex-test.el --- Tests for agent-codex -*- lexical-binding: t -*-
 
-;; Tests for pure and near-pure helper functions in agents-codex.el.
+;; Tests for pure and near-pure helper functions in agent-codex.el.
 
 ;;; Code:
 
 (require 'ert)
 (require 'cl-lib)
-(require 'agents-codex)
+(require 'agent-codex)
 
 ;;;; Account selection
 
-(ert-deftest agents-codex-test-account-env-uses-pending-account ()
+(ert-deftest agent-codex-test-account-env-uses-pending-account ()
   "Set CODEX_HOME from the dynamically bound pending account."
   (let* ((dir (make-temp-file "codex-account" t))
          (home (expand-file-name "work" dir))
          (canonical (expand-file-name ".codex" dir))
          (process-environment (cons (format "HOME=%s" dir)
                                     process-environment))
-         (agents-codex-accounts `(("work" . ,home)))
-         (agents-codex--pending-account "work"))
+         (agent-codex-accounts `(("work" . ,home)))
+         (agent-codex--pending-account "work"))
     (unwind-protect
         (progn
           (make-directory canonical t)
           (with-temp-file (expand-file-name "config.toml" canonical)
             (insert "model = \"gpt-5.5\"\n"))
-          (should (equal (agents-codex-account-env "*codex*" dir)
+          (should (equal (agent-codex-account-env "*codex*" dir)
                          (list (format "CODEX_HOME=%s" home)))))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-account-env-symlinks-shared-state ()
+(ert-deftest agent-codex-test-account-env-symlinks-shared-state ()
   "Share hooks, skills, and history from the canonical Codex home."
   (let* ((dir (make-temp-file "codex-account" t))
          (home (expand-file-name "work" dir))
          (canonical (expand-file-name ".codex" dir))
          (process-environment (cons (format "HOME=%s" dir)
                                     process-environment))
-         (agents-codex-accounts `(("work" . ,home)))
-         (agents-codex--pending-account "work"))
+         (agent-codex-accounts `(("work" . ,home)))
+         (agent-codex--pending-account "work"))
     (unwind-protect
         (progn
           (make-directory (expand-file-name "skills" canonical) t)
@@ -44,7 +44,7 @@
             (insert "{}\n"))
           (with-temp-file (expand-file-name "history.jsonl" canonical)
             (insert "{\"text\":\"old chat\"}\n"))
-          (agents-codex-account-env "*codex*" dir)
+          (agent-codex-account-env "*codex*" dir)
           (dolist (item '("hooks.json" "history.jsonl" "skills"))
             (let ((target (expand-file-name item home))
                   (source (expand-file-name item canonical)))
@@ -53,15 +53,15 @@
                              (file-truename source))))))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-account-env-backs-up-conflicting-state ()
+(ert-deftest agent-codex-test-account-env-backs-up-conflicting-state ()
   "Back up account-local shared state before linking canonical state."
   (let* ((dir (make-temp-file "codex-account" t))
          (home (expand-file-name "work" dir))
          (canonical (expand-file-name ".codex" dir))
          (process-environment (cons (format "HOME=%s" dir)
                                     process-environment))
-         (agents-codex-accounts `(("work" . ,home)))
-         (agents-codex--pending-account "work"))
+         (agent-codex-accounts `(("work" . ,home)))
+         (agent-codex--pending-account "work"))
     (unwind-protect
         (progn
           (make-directory home t)
@@ -70,11 +70,11 @@
             (insert "{\"text\":\"canonical\"}\n"))
           (with-temp-file (expand-file-name "history.jsonl" home)
             (insert "{\"text\":\"account-local\"}\n"))
-          (agents-codex-account-env "*codex*" dir)
+          (agent-codex-account-env "*codex*" dir)
           (let ((target (expand-file-name "history.jsonl" home))
                 (backups (file-expand-wildcards
                           (expand-file-name
-                           "history.jsonl.agents-backup-*" home))))
+                           "history.jsonl.agent-backup-*" home))))
             (should (file-symlink-p target))
             (should (equal (length backups) 1))
             (with-temp-buffer
@@ -82,53 +82,53 @@
               (should (string-match-p "account-local" (buffer-string))))))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-load-account-ignores-stale-selection ()
+(ert-deftest agent-codex-test-load-account-ignores-stale-selection ()
   "Ignore account-file contents not present in configured accounts."
   (let* ((dir (make-temp-file "codex-account" t))
          (file (expand-file-name "current" dir))
-         (agents-codex-account-file file)
-         (agents-codex-accounts `(("work" . ,(expand-file-name "work" dir)))))
+         (agent-codex-account-file file)
+         (agent-codex-accounts `(("work" . ,(expand-file-name "work" dir)))))
     (unwind-protect
         (progn
           (with-temp-file file
             (insert "missing\n"))
-          (should-not (agents-codex--load-account)))
+          (should-not (agent-codex--load-account)))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-read-config-model-uses-account-home ()
+(ert-deftest agent-codex-test-read-config-model-uses-account-home ()
   "Read model configuration from the selected account's CODEX_HOME."
   (let* ((dir (make-temp-file "codex-account" t))
          (home (expand-file-name "work" dir))
          (config (expand-file-name "config.toml" home))
-         (agents-codex-accounts `(("work" . ,home)))
-         (agents-codex--config-model-cache nil))
+         (agent-codex-accounts `(("work" . ,home)))
+         (agent-codex--config-model-cache nil))
     (unwind-protect
         (progn
           (make-directory home t)
           (with-temp-file config
             (insert "model = \"gpt-5.5\"\n"))
-          (should (equal (agents-codex--read-config-model "work")
+          (should (equal (agent-codex--read-config-model "work")
                          "gpt-5.5")))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-restart-preserves-buffer-account ()
+(ert-deftest agent-codex-test-restart-preserves-buffer-account ()
   "Restart Codex with the account attached to the current session."
   (let (captured-account)
     (with-temp-buffer
       (rename-buffer "*codex:~/project/:default*" t)
-      (setq-local agents-codex--buffer-account "work")
+      (setq-local agent-codex--buffer-account "work")
       (cl-letf (((symbol-function 'codex--buffer-p) (lambda (_buffer) t))
-                ((symbol-function 'agents--force-kill-buffer) #'ignore)
-                ((symbol-function 'agents-codex--resolve-account)
+                ((symbol-function 'agent--force-kill-buffer) #'ignore)
+                ((symbol-function 'agent-codex--resolve-account)
                  (lambda () (error "should not resolve active account")))
                 ((symbol-function 'codex--directory) (lambda () default-directory))
                 ((symbol-function 'codex--start-subcommand)
                  (lambda (&rest _)
-                   (setq captured-account agents-codex--pending-account))))
-        (agents-codex-restart)))
+                   (setq captured-account agent-codex--pending-account))))
+        (agent-codex-restart)))
     (should (equal captured-account "work"))))
 
-(ert-deftest agents-codex-test-send-command-and-return-are-separate ()
+(ert-deftest agent-codex-test-send-command-and-return-are-separate ()
   "Insert Codex command text separately from submitting it."
   (let (events)
     (with-temp-buffer
@@ -141,15 +141,15 @@
                      (push (list 'action action) events)))
                   ((symbol-function 'display-buffer)
                    (lambda (_buffer &optional _action _frame) nil)))
-          (agents-codex-send-command "$session-learning-capture" buf)
-          (agents-codex-send-return buf))))
+          (agent-codex-send-command "$session-learning-capture" buf)
+          (agent-codex-send-return buf))))
     (should (equal (nreverse events)
                    '((string "$session-learning-capture")
                      (action :return))))))
 
 ;;;; Theme sync
 
-(ert-deftest agents-codex-test-sync-theme-updates-existing-tui-section ()
+(ert-deftest agent-codex-test-sync-theme-updates-existing-tui-section ()
   "Persist theme changes to an existing Codex `[tui]' section."
   (let* ((dir (make-temp-file "codex-theme" t))
          (config (expand-file-name "config.toml" dir))
@@ -158,7 +158,7 @@
         (progn
           (with-temp-file config
             (insert "model = \"gpt-5.5\"\n\n[tui]\ntheme = \"light\"\n"))
-          (should (agents-codex--sync-theme "dark"))
+          (should (agent-codex--sync-theme "dark"))
           (should (string-match-p
                    "^\\[tui\\]\ntheme = \"dark\""
                    (with-temp-buffer
@@ -166,7 +166,7 @@
                      (buffer-string)))))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-sync-theme-adds-tui-section ()
+(ert-deftest agent-codex-test-sync-theme-adds-tui-section ()
   "Create a Codex `[tui]' section when the config has none."
   (let* ((dir (make-temp-file "codex-theme" t))
          (config (expand-file-name "config.toml" dir))
@@ -175,7 +175,7 @@
         (progn
           (with-temp-file config
             (insert "model = \"gpt-5.5\"\n"))
-          (should (agents-codex--sync-theme "light"))
+          (should (agent-codex--sync-theme "light"))
           (should (string-match-p
                    "\\[tui\\]\ntheme = \"light\""
                    (with-temp-buffer
@@ -183,7 +183,7 @@
                      (buffer-string)))))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-sync-theme-skips-unchanged-config ()
+(ert-deftest agent-codex-test-sync-theme-skips-unchanged-config ()
   "Avoid rewriting Codex config when the theme already matches."
   (let* ((dir (make-temp-file "codex-theme" t))
          (config (expand-file-name "config.toml" dir))
@@ -192,10 +192,10 @@
         (progn
           (with-temp-file config
             (insert "[tui]\ntheme = \"dark\"\n"))
-          (should-not (agents-codex--sync-theme "dark")))
+          (should-not (agent-codex--sync-theme "dark")))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-sync-theme-to-config-allows-legacy-call ()
+(ert-deftest agent-codex-test-sync-theme-to-config-allows-legacy-call ()
   "Accept the old no-argument theme config writer call."
   (let* ((dir (make-temp-file "codex-theme" t))
          (config (expand-file-name "config.toml" dir))
@@ -207,7 +207,7 @@
           (cl-letf (((symbol-function 'frame-parameter)
                      (lambda (_frame param)
                        (when (eq param 'background-mode) 'dark))))
-            (should (agents-codex--sync-theme-to-config)))
+            (should (agent-codex--sync-theme-to-config)))
           (should (string-match-p
                    "^\\[tui\\]\ntheme = \"dark\""
                    (with-temp-buffer
@@ -215,7 +215,7 @@
                      (buffer-string)))))
       (delete-directory dir t))))
 
-(ert-deftest agents-codex-test-sync-theme-uses-pending-account-home ()
+(ert-deftest agent-codex-test-sync-theme-uses-pending-account-home ()
   "Persist theme changes to the pending account's Codex config."
   (let* ((dir (make-temp-file "codex-theme" t))
          (home (expand-file-name "work" dir))
@@ -224,14 +224,14 @@
          (canonical-config (expand-file-name "config.toml" canonical))
          (process-environment (cons (format "HOME=%s" dir)
                                     process-environment))
-         (agents-codex-accounts `(("work" . ,home)))
-         (agents-codex--pending-account "work"))
+         (agent-codex-accounts `(("work" . ,home)))
+         (agent-codex--pending-account "work"))
     (unwind-protect
         (progn
           (make-directory canonical t)
           (with-temp-file canonical-config
             (insert "[tui]\ntheme = \"light\"\n"))
-          (should (agents-codex--sync-theme "dark"))
+          (should (agent-codex--sync-theme "dark"))
           (should (file-symlink-p config))
           (should (string-match-p
                    "^\\[tui\\]\ntheme = \"dark\""
@@ -242,7 +242,7 @@
 
 ;;;; Skill runner
 
-(ert-deftest agents-codex-test-parse-skill-frontmatter-argument-metadata ()
+(ert-deftest agent-codex-test-parse-skill-frontmatter-argument-metadata ()
   "Parse Codex skill argument metadata with the shared parser."
   (let ((file (make-temp-file "codex-skill" nil ".md")))
     (unwind-protect
@@ -254,14 +254,14 @@
             (insert "argument-hint: FILE\n")
             (insert "argument-source: references/*.org\n")
             (insert "---\n"))
-          (let ((meta (agents-codex--parse-skill-frontmatter file)))
+          (let ((meta (agent-codex--parse-skill-frontmatter file)))
             (should (equal (plist-get meta :name) "proofread"))
             (should (equal (plist-get meta :argument-hint) "FILE"))
             (should (equal (plist-get meta :argument-source)
                            "references/*.org"))))
       (delete-file file))))
 
-(ert-deftest agents-codex-test-discover-skills-skips-non-invocable ()
+(ert-deftest agent-codex-test-discover-skills-skips-non-invocable ()
   "Do not expose Codex skills marked `user-invocable: false'."
   (let* ((dir (make-temp-file "codex-skills" t))
          (codex-home (make-temp-file "codex-home" t))
@@ -269,8 +269,8 @@
          (hidden (expand-file-name "hidden/SKILL.md" dir))
          (process-environment
           (cons (format "CODEX_HOME=%s" codex-home) process-environment))
-         (agents-codex-skill-directories (list dir))
-         (agents-codex-programmatic-skill-directories nil)
+         (agent-codex-skill-directories (list dir))
+         (agent-codex-programmatic-skill-directories nil)
          (default-directory dir))
     (unwind-protect
         (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil)))
@@ -281,12 +281,12 @@
           (with-temp-file hidden
             (insert "---\nname: hidden\nuser-invocable: false\n---\n"))
           (should (equal (mapcar (lambda (skill) (plist-get skill :name))
-                                 (agents-codex--discover-skills))
+                                 (agent-codex--discover-skills))
                          '("visible"))))
       (delete-directory dir t)
       (delete-directory codex-home t))))
 
-(ert-deftest agents-codex-test-build-exec-command ()
+(ert-deftest agent-codex-test-build-exec-command ()
   "Build a current `codex exec' command line."
   (let ((codex-program "codex")
         (codex-program-switches '("--search"))
@@ -295,22 +295,22 @@
         (codex-sandbox-mode 'workspace-write)
         (codex-approval-policy 'on-request)
         (codex-default-images '("image.png"))
-        (agents-codex-exec-approval-policy 'never)
-        (agents-codex-exec-sandbox-mode nil)
-        (agents-codex-exec-skip-git-repo-check t))
+        (agent-codex-exec-approval-policy 'never)
+        (agent-codex-exec-sandbox-mode nil)
+        (agent-codex-exec-skip-git-repo-check t))
     (should (equal
-             (agents-codex--build-exec-command "prompt" "/tmp/project")
+             (agent-codex--build-exec-command "prompt" "/tmp/project")
              '("codex" "--search" "--ask-for-approval" "never"
                "exec" "--model" "gpt-5.5"
                "--profile" "work" "--sandbox" "workspace-write"
                "--image" "image.png" "--cd" "/tmp/project" "--color" "never"
                "--skip-git-repo-check" "prompt")))))
 
-(ert-deftest agents-codex-test-run-skill-uses-codex-exec ()
+(ert-deftest agent-codex-test-run-skill-uses-codex-exec ()
   "Run discovered skills through the non-interactive Codex path."
   (let* ((dir (make-temp-file "codex-skills" t))
          (skill-file (expand-file-name "proofread/SKILL.md" dir))
-         (agents-codex-skill-directories (list dir))
+         (agent-codex-skill-directories (list dir))
          captured-prompt
          captured-dir)
     (unwind-protect
@@ -318,19 +318,19 @@
           (make-directory (file-name-directory skill-file) t)
           (with-temp-file skill-file
             (insert "---\nname: proofread\n---\nProofread the file.\n"))
-          (cl-letf (((symbol-function 'agents-codex--run-prompt)
+          (cl-letf (((symbol-function 'agent-codex--run-prompt)
                      (lambda (prompt &rest kwargs)
                        (setq captured-prompt prompt
                              captured-dir (plist-get kwargs :dir))
                        (funcall (plist-get kwargs :callback)
                                 '(:exit-code 0 :duration 0.1 :text "ok"))))
-                    ((symbol-function 'agents-codex--display-result)
+                    ((symbol-function 'agent-codex--display-result)
                      #'ignore))
-            (agents-codex-run-skill "proofread" "file.org"))
+            (agent-codex-run-skill "proofread" "file.org"))
           (should (string-match-p (regexp-quote skill-file) captured-prompt))
           (should (string-match-p "Arguments: file.org" captured-prompt))
           (should (equal captured-dir default-directory)))
       (delete-directory dir t))))
 
-(provide 'agents-codex-test)
-;;; agents-codex-test.el ends here
+(provide 'agent-codex-test)
+;;; agent-codex-test.el ends here

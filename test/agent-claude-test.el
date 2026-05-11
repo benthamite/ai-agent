@@ -1,82 +1,82 @@
-;;; agents-claude-test.el --- Tests for agents-claude -*- lexical-binding: t -*-
+;;; agent-claude-test.el --- Tests for agent-claude -*- lexical-binding: t -*-
 
-;; Tests for pure and near-pure helper functions in agents-claude.el.
+;; Tests for pure and near-pure helper functions in agent-claude.el.
 
 ;;; Code:
 
 (require 'ert)
 (require 'json)
-(require 'agents-claude)
+(require 'agent-claude)
 
 ;;;; Session name extraction
 
-(ert-deftest agents-claude-test-session-name-standard ()
+(ert-deftest agent-claude-test-session-name-standard ()
   "Extract project name from a standard Claude buffer name."
-  (should (equal (agents-claude--session-name
+  (should (equal (agent-claude--session-name
                   "*claude:~/path/to/project/:default*")
                  "project")))
 
-(ert-deftest agents-claude-test-session-name-named-instance ()
+(ert-deftest agent-claude-test-session-name-named-instance ()
   "Extract project name regardless of instance name."
-  (should (equal (agents-claude--session-name
+  (should (equal (agent-claude--session-name
                   "*claude:~/repos/my-app/:worktree-1*")
                  "my-app")))
 
-(ert-deftest agents-claude-test-session-name-deep-path ()
+(ert-deftest agent-claude-test-session-name-deep-path ()
   "Extract project name from a deeply nested path."
-  (should (equal (agents-claude--session-name
+  (should (equal (agent-claude--session-name
                   "*claude:~/My Drive/repos/org/subdir/:main*")
                  "subdir")))
 
-(ert-deftest agents-claude-test-session-name-non-matching ()
+(ert-deftest agent-claude-test-session-name-non-matching ()
   "Return buffer name unchanged when it does not match the pattern."
-  (should (equal (agents-claude--session-name "*scratch*")
+  (should (equal (agent-claude--session-name "*scratch*")
                  "*scratch*")))
 
-(ert-deftest agents-claude-test-session-name-no-trailing-star ()
+(ert-deftest agent-claude-test-session-name-no-trailing-star ()
   "Return buffer name unchanged when trailing asterisk is missing."
-  (should (equal (agents-claude--session-name
+  (should (equal (agent-claude--session-name
                   "*claude:~/path/to/project/:default")
                  "*claude:~/path/to/project/:default")))
 
 ;;;; Sanitize buffer name
 
-(ert-deftest agents-claude-test-sanitize-buffer-name-replaces-special ()
+(ert-deftest agent-claude-test-sanitize-buffer-name-replaces-special ()
   "Non-alphanumeric characters (except _ and -) are replaced with underscores."
   (with-temp-buffer
     (rename-buffer "*claude:~/foo/bar/:default*" t)
-    (should (equal (agents-claude--sanitize-buffer-name)
+    (should (equal (agent-claude--sanitize-buffer-name)
                    "_claude___foo_bar__default_"))))
 
-(ert-deftest agents-claude-test-sanitize-buffer-name-preserves-safe ()
+(ert-deftest agent-claude-test-sanitize-buffer-name-preserves-safe ()
   "Alphanumeric characters, underscores, and hyphens are preserved."
   (with-temp-buffer
     (rename-buffer "hello_world-123" t)
-    (should (equal (agents-claude--sanitize-buffer-name)
+    (should (equal (agent-claude--sanitize-buffer-name)
                    "hello_world-123"))))
 
-(ert-deftest agents-claude-test-sanitize-buffer-name-spaces ()
+(ert-deftest agent-claude-test-sanitize-buffer-name-spaces ()
   "Spaces are replaced with underscores."
   (with-temp-buffer
     (rename-buffer "my buffer name" t)
-    (should (equal (agents-claude--sanitize-buffer-name)
+    (should (equal (agent-claude--sanitize-buffer-name)
                    "my_buffer_name"))))
 
-(ert-deftest agents-claude-test-status-file-name-avoids-sanitizer-collisions ()
+(ert-deftest agent-claude-test-status-file-name-avoids-sanitizer-collisions ()
   "Distinct buffer names get distinct status filenames."
   (should-not
-   (equal (agents-claude--status-file-name "*claude:~/foo/bar/:default*")
-          (agents-claude--status-file-name "*claude:~/foo_bar/:default*"))))
+   (equal (agent-claude--status-file-name "*claude:~/foo/bar/:default*")
+          (agent-claude--status-file-name "*claude:~/foo_bar/:default*"))))
 
 ;;;; Theme sync
 
-(defun agents-claude-test--json-theme (file)
+(defun agent-claude-test--json-theme (file)
   "Return the `theme' value from JSON FILE."
   (with-temp-buffer
     (insert-file-contents file)
     (gethash "theme" (json-parse-buffer))))
 
-(ert-deftest agents-claude-test-sync-theme-writes-config-files ()
+(ert-deftest agent-claude-test-sync-theme-writes-config-files ()
   "Persist theme changes to Claude Code JSON config files."
   (let* ((dir (make-temp-file "claude-theme" t))
          (settings (expand-file-name ".claude/settings.json" dir))
@@ -92,18 +92,18 @@
             (insert "{\"theme\":\"light\",\"other\":1}"))
           (with-temp-file account
             (insert "{\"theme\":\"light\"}"))
-          (cl-letf (((symbol-function 'agents-claude--theme-config-files)
+          (cl-letf (((symbol-function 'agent-claude--theme-config-files)
                      (lambda () (list settings legacy account))))
-            (should (= (agents-claude--sync-theme "dark") 3))
-            (should (equal (agents-claude-test--json-theme settings)
+            (should (= (agent-claude--sync-theme "dark") 3))
+            (should (equal (agent-claude-test--json-theme settings)
                            "dark"))
-            (should (equal (agents-claude-test--json-theme legacy)
+            (should (equal (agent-claude-test--json-theme legacy)
                            "dark"))
-            (should (equal (agents-claude-test--json-theme account)
+            (should (equal (agent-claude-test--json-theme account)
                            "dark"))))
       (delete-directory dir t))))
 
-(ert-deftest agents-claude-test-theme-config-files-prefers-settings ()
+(ert-deftest agent-claude-test-theme-config-files-prefers-settings ()
   "Sync modern settings files before legacy `.claude.json' files."
   (let* ((dir (make-temp-file "claude-theme" t))
          (settings (expand-file-name "settings.json" dir))
@@ -114,15 +114,15 @@
         (progn
           (with-temp-file settings (insert "{}"))
           (with-temp-file legacy (insert "{}"))
-          (cl-letf (((symbol-function 'agents-claude--all-claude-settings-paths)
+          (cl-letf (((symbol-function 'agent-claude--all-claude-settings-paths)
                      (lambda () (list settings missing-settings)))
-                    ((symbol-function 'agents-claude--all-claude-json-paths)
+                    ((symbol-function 'agent-claude--all-claude-json-paths)
                      (lambda () (list legacy missing-legacy))))
-            (should (equal (agents-claude--theme-config-files)
+            (should (equal (agent-claude--theme-config-files)
                            (list settings legacy)))))
       (delete-directory dir t))))
 
-(ert-deftest agents-claude-test-sync-theme-skips-unchanged-config ()
+(ert-deftest agent-claude-test-sync-theme-skips-unchanged-config ()
   "Avoid rewriting Claude Code JSON files when the theme already matches."
   (let* ((dir (make-temp-file "claude-theme" t))
          (canonical (expand-file-name ".claude.json" dir)))
@@ -130,12 +130,12 @@
         (progn
           (with-temp-file canonical
             (insert "{\"theme\":\"dark\"}"))
-          (cl-letf (((symbol-function 'agents-claude--theme-config-files)
+          (cl-letf (((symbol-function 'agent-claude--theme-config-files)
                      (lambda () (list canonical))))
-            (should (= (agents-claude--sync-theme "dark") 0))))
+            (should (= (agent-claude--sync-theme "dark") 0))))
       (delete-directory dir t))))
 
-(ert-deftest agents-claude-test-sync-theme-errors-on-invalid-json ()
+(ert-deftest agent-claude-test-sync-theme-errors-on-invalid-json ()
   "Do not overwrite an existing invalid Claude Code JSON file."
   (let* ((dir (make-temp-file "claude-theme" t))
          (canonical (expand-file-name ".claude.json" dir)))
@@ -143,9 +143,9 @@
         (progn
           (with-temp-file canonical
             (insert "{"))
-          (cl-letf (((symbol-function 'agents-claude--theme-config-files)
+          (cl-letf (((symbol-function 'agent-claude--theme-config-files)
                      (lambda () (list canonical))))
-            (should-error (agents-claude--sync-theme "dark")))
+            (should-error (agent-claude--sync-theme "dark")))
           (should (equal (with-temp-buffer
                            (insert-file-contents canonical)
                            (buffer-string))
@@ -154,160 +154,160 @@
 
 ;;;; Batch format prompt
 
-(ert-deftest agents-claude-test-batch-format-prompt-title-only ()
+(ert-deftest agent-claude-test-batch-format-prompt-title-only ()
   "Return title alone when body is empty."
-  (should (equal (agents-claude--batch-format-prompt
+  (should (equal (agent-claude--batch-format-prompt
                   '(:title "Fix the bug" :body ""))
                  "Fix the bug")))
 
-(ert-deftest agents-claude-test-batch-format-prompt-title-and-body ()
+(ert-deftest agent-claude-test-batch-format-prompt-title-and-body ()
   "Return title and body separated by blank line."
-  (should (equal (agents-claude--batch-format-prompt
+  (should (equal (agent-claude--batch-format-prompt
                   '(:title "Fix the bug" :body "See error in log"))
                  "Fix the bug\n\nSee error in log")))
 
-(ert-deftest agents-claude-test-batch-format-prompt-nil-body ()
+(ert-deftest agent-claude-test-batch-format-prompt-nil-body ()
   "Return title alone when body is nil."
-  (should (equal (agents-claude--batch-format-prompt
+  (should (equal (agent-claude--batch-format-prompt
                   '(:title "Refactor module" :body nil))
                  "Refactor module")))
 
 ;;;; Status accessors
 
-(ert-deftest agents-claude-test-status-model-present ()
+(ert-deftest agent-claude-test-status-model-present ()
   "Return display_name when model data is present."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:model (:display_name "Claude Opus 4"))))
-    (should (equal (agents-claude-status-model) "Claude Opus 4"))))
+    (should (equal (agent-claude-status-model) "Claude Opus 4"))))
 
-(ert-deftest agents-claude-test-status-model-nil ()
+(ert-deftest agent-claude-test-status-model-nil ()
   "Return nil when status data has no model."
-  (let ((agents-claude--status-data nil))
-    (should-not (agents-claude-status-model))))
+  (let ((agent-claude--status-data nil))
+    (should-not (agent-claude-status-model))))
 
-(ert-deftest agents-claude-test-status-cost-present ()
+(ert-deftest agent-claude-test-status-cost-present ()
   "Return total_cost_usd when cost data is present."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:cost (:total_cost_usd 0.42))))
-    (should (= (agents-claude-status-cost) 0.42))))
+    (should (= (agent-claude-status-cost) 0.42))))
 
-(ert-deftest agents-claude-test-status-cost-nil ()
+(ert-deftest agent-claude-test-status-cost-nil ()
   "Return nil when status data has no cost."
-  (let ((agents-claude--status-data nil))
-    (should-not (agents-claude-status-cost))))
+  (let ((agent-claude--status-data nil))
+    (should-not (agent-claude-status-cost))))
 
-(ert-deftest agents-claude-test-status-context-percent ()
+(ert-deftest agent-claude-test-status-context-percent ()
   "Return used_percentage from context_window data."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window (:used_percentage 73.5))))
-    (should (= (agents-claude-status-context-percent) 73.5))))
+    (should (= (agent-claude-status-context-percent) 73.5))))
 
-(ert-deftest agents-claude-test-status-context-percent-nil ()
+(ert-deftest agent-claude-test-status-context-percent-nil ()
   "Return nil when no context_window data."
-  (let ((agents-claude--status-data nil))
-    (should-not (agents-claude-status-context-percent))))
+  (let ((agent-claude--status-data nil))
+    (should-not (agent-claude-status-context-percent))))
 
-(ert-deftest agents-claude-test-status-token-count ()
+(ert-deftest agent-claude-test-status-token-count ()
   "Return total_input_tokens from context_window data."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window (:total_input_tokens 50000))))
-    (should (= (agents-claude-status-token-count) 50000))))
+    (should (= (agent-claude-status-token-count) 50000))))
 
-(ert-deftest agents-claude-test-status-token-count-nil ()
+(ert-deftest agent-claude-test-status-token-count-nil ()
   "Return nil when no context_window data."
-  (let ((agents-claude--status-data nil))
-    (should-not (agents-claude-status-token-count))))
+  (let ((agent-claude--status-data nil))
+    (should-not (agent-claude-status-token-count))))
 
-(ert-deftest agents-claude-test-status-lines-added ()
+(ert-deftest agent-claude-test-status-lines-added ()
   "Return total_lines_added from cost data."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:cost (:total_lines_added 120))))
-    (should (= (agents-claude-status-lines-added) 120))))
+    (should (= (agent-claude-status-lines-added) 120))))
 
-(ert-deftest agents-claude-test-status-lines-removed ()
+(ert-deftest agent-claude-test-status-lines-removed ()
   "Return total_lines_removed from cost data."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:cost (:total_lines_removed 30))))
-    (should (= (agents-claude-status-lines-removed) 30))))
+    (should (= (agent-claude-status-lines-removed) 30))))
 
-(ert-deftest agents-claude-test-status-duration-ms ()
+(ert-deftest agent-claude-test-status-duration-ms ()
   "Return total_duration_ms from cost data."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:cost (:total_duration_ms 12500))))
-    (should (= (agents-claude-status-duration-ms) 12500))))
+    (should (= (agent-claude-status-duration-ms) 12500))))
 
-(ert-deftest agents-claude-test-status-cache-read-tokens ()
+(ert-deftest agent-claude-test-status-cache-read-tokens ()
   "Return cache_read_input_tokens from current_usage."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window (:current_usage (:cache_read_input_tokens 8000)))))
-    (should (= (agents-claude-status-cache-read-tokens) 8000))))
+    (should (= (agent-claude-status-cache-read-tokens) 8000))))
 
-(ert-deftest agents-claude-test-status-cache-read-tokens-nil ()
+(ert-deftest agent-claude-test-status-cache-read-tokens-nil ()
   "Return nil when current_usage is missing."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window (:used_percentage 50))))
-    (should-not (agents-claude-status-cache-read-tokens))))
+    (should-not (agent-claude-status-cache-read-tokens))))
 
-(ert-deftest agents-claude-test-status-cache-total-tokens-all-fields ()
+(ert-deftest agent-claude-test-status-cache-total-tokens-all-fields ()
   "Sum input_tokens, cache_creation_input_tokens, and cache_read_input_tokens."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window
            (:current_usage (:input_tokens 100
                             :cache_creation_input_tokens 200
                             :cache_read_input_tokens 300)))))
-    (should (= (agents-claude-status-cache-total-tokens) 600))))
+    (should (= (agent-claude-status-cache-total-tokens) 600))))
 
-(ert-deftest agents-claude-test-status-cache-total-tokens-partial ()
+(ert-deftest agent-claude-test-status-cache-total-tokens-partial ()
   "Missing sub-fields default to zero in the sum."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window
            (:current_usage (:cache_read_input_tokens 500)))))
-    (should (= (agents-claude-status-cache-total-tokens) 500))))
+    (should (= (agent-claude-status-cache-total-tokens) 500))))
 
-(ert-deftest agents-claude-test-status-cache-total-tokens-nil ()
+(ert-deftest agent-claude-test-status-cache-total-tokens-nil ()
   "Return nil when current_usage is absent."
-  (let ((agents-claude--status-data
+  (let ((agent-claude--status-data
          '(:context_window (:used_percentage 50))))
-    (should-not (agents-claude-status-cache-total-tokens))))
+    (should-not (agent-claude-status-cache-total-tokens))))
 
 ;;;; Alert indicator
 
-(ert-deftest agents-claude-test-alert-indicator-active ()
+(ert-deftest agent-claude-test-alert-indicator-active ()
   "Return bell-on icon when alert is enabled."
-  (let ((agents-alert-on-ready t))
-    (should (equal (agents-claude-alert-indicator) "🔔"))))
+  (let ((agent-alert-on-ready t))
+    (should (equal (agent-claude-alert-indicator) "🔔"))))
 
-(ert-deftest agents-claude-test-alert-indicator-inactive ()
+(ert-deftest agent-claude-test-alert-indicator-inactive ()
   "Return bell-off icon when alert is disabled."
-  (let ((agents-alert-on-ready nil))
-    (should (equal (agents-claude-alert-indicator) "🔕"))))
+  (let ((agent-alert-on-ready nil))
+    (should (equal (agent-claude-alert-indicator) "🔕"))))
 
-(ert-deftest agents-claude-test-alert-indicator-uses-shared-state ()
-  "Reflect the shared `agents-alert-on-ready' state."
-  (let ((agents-alert-on-ready t))
-    (should (equal (agents-claude-alert-indicator) "🔔"))))
+(ert-deftest agent-claude-test-alert-indicator-uses-shared-state ()
+  "Reflect the shared `agent-alert-on-ready' state."
+  (let ((agent-alert-on-ready t))
+    (should (equal (agent-claude-alert-indicator) "🔔"))))
 
 ;;;; Transient menu
 
-(ert-deftest agents-claude-test-agent-log-wrapper-is-command ()
+(ert-deftest agent-claude-test-agent-log-wrapper-is-command ()
   "Expose log browsing as a command without requiring `agent-log'."
-  (should (commandp 'agents-claude-agent-log-menu)))
+  (should (commandp 'agent-claude-agent-log-menu)))
 
 ;;;; Display names
 
-(ert-deftest agents-claude-test-display-name-adds-branch-suffix ()
+(ert-deftest agent-claude-test-display-name-adds-branch-suffix ()
   "Append Claude branch suffixes via the shared display-name hook."
   (with-temp-buffer
     (rename-buffer "*claude:~/repo/unique-claude-display-test/:default*" t)
-    (let ((agents-claude--original-session-id "original-session")
-          (agents-claude--status-data
+    (let ((agent-claude--original-session-id "original-session")
+          (agent-claude--status-data
            '(:session_id "branched-session-id")))
-      (should (equal (agents-claude-display-name (current-buffer))
+      (should (equal (agent-claude-display-name (current-buffer))
                      "unique-claude-display-test:branched")))))
 
 ;;;; Batch parse stream JSON
 
-(ert-deftest agents-claude-test-batch-parse-stream-json-assistant-text ()
+(ert-deftest agent-claude-test-batch-parse-stream-json-assistant-text ()
   "Extract assistant text from stream-json output."
   (let* ((line1 (json-encode '(:type "assistant"
                                 :message (:content [(:type "text" :text "Hello world")]))))
@@ -317,12 +317,12 @@
                                 :num_turns 1
                                 :subtype "success")))
          (raw (concat line1 "\n" line2))
-         (result (agents-claude--batch-parse-stream-json raw)))
+         (result (agent-claude--batch-parse-stream-json raw)))
     (should (equal (plist-get result :text) "Hello world"))
     (should (= (plist-get result :cost) 0.05))
     (should (equal (plist-get result :session-id) "sess-123"))))
 
-(ert-deftest agents-claude-test-batch-parse-stream-json-multiple-blocks ()
+(ert-deftest agent-claude-test-batch-parse-stream-json-multiple-blocks ()
   "Multiple assistant text blocks are joined with double newlines."
   (let* ((line1 (json-encode '(:type "assistant"
                                 :message (:content [(:type "text" :text "Part one")]))))
@@ -331,43 +331,43 @@
          (line3 (json-encode '(:type "result" :total_cost_usd 0.1
                                 :session_id "s1" :num_turns 2 :subtype "success")))
          (raw (concat line1 "\n" line2 "\n" line3))
-         (result (agents-claude--batch-parse-stream-json raw)))
+         (result (agent-claude--batch-parse-stream-json raw)))
     (should (equal (plist-get result :text) "Part one\n\nPart two"))))
 
-(ert-deftest agents-claude-test-batch-parse-stream-json-no-text ()
+(ert-deftest agent-claude-test-batch-parse-stream-json-no-text ()
   "Produce fallback message when no assistant text is captured."
   (let* ((line (json-encode '(:type "result" :total_cost_usd 0.0
                                :session_id "s99" :num_turns 0 :subtype "timeout")))
          (raw line)
-         (result (agents-claude--batch-parse-stream-json raw)))
+         (result (agent-claude--batch-parse-stream-json raw)))
     (should (string-match-p "No assistant text captured" (plist-get result :text)))
     (should (string-match-p "s99" (plist-get result :text)))))
 
-(ert-deftest agents-claude-test-batch-parse-stream-json-cost-usd-fallback ()
+(ert-deftest agent-claude-test-batch-parse-stream-json-cost-usd-fallback ()
   "Use cost_usd when total_cost_usd is absent."
   (let* ((line (json-encode '(:type "result" :cost_usd 0.03
                                :session_id "s1" :num_turns 1 :subtype "ok")))
-         (result (agents-claude--batch-parse-stream-json line)))
+         (result (agent-claude--batch-parse-stream-json line)))
     (should (= (plist-get result :cost) 0.03))))
 
-(ert-deftest agents-claude-test-batch-parse-stream-json-malformed-lines ()
+(ert-deftest agent-claude-test-batch-parse-stream-json-malformed-lines ()
   "Malformed JSON lines are silently skipped."
   (let* ((good (json-encode '(:type "result" :total_cost_usd 0.01
                                :session_id "s1" :num_turns 1 :subtype "ok")))
          (raw (concat "not valid json\n" good))
-         (result (agents-claude--batch-parse-stream-json raw)))
+         (result (agent-claude--batch-parse-stream-json raw)))
     (should (= (plist-get result :cost) 0.01))))
 
-(ert-deftest agents-claude-test-batch-parse-stream-json-empty-input ()
+(ert-deftest agent-claude-test-batch-parse-stream-json-empty-input ()
   "Empty input returns zero cost and fallback text."
-  (let ((result (agents-claude--batch-parse-stream-json "")))
+  (let ((result (agent-claude--batch-parse-stream-json "")))
     (should (= (plist-get result :cost) 0))
     (should (string-match-p "No assistant text captured" (plist-get result :text)))))
 
-(ert-deftest agents-claude-test-skill-result-does-not-modify-new-user-buffer ()
+(ert-deftest agent-claude-test-skill-result-does-not-modify-new-user-buffer ()
   "Display skill output in a result buffer, not an unrelated new buffer."
-  (let ((existing (get-buffer-create "*agents-existing*"))
-        (unrelated (get-buffer-create "*agents-unrelated*"))
+  (let ((existing (get-buffer-create "*agent-existing*"))
+        (unrelated (get-buffer-create "*agent-unrelated*"))
         (result-buffer "*Claude Skill: proofread*"))
     (unwind-protect
         (progn
@@ -375,7 +375,7 @@
             (erase-buffer)
             (insert "#+title: User buffer\nBody\n"))
           (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
-            (agents-claude--skill-display-result
+            (agent-claude--skill-display-result
              "proofread"
              '(:cost 0.0 :duration 0.1 :text "ok")
              (list existing)))
@@ -391,65 +391,65 @@
 
 ;;;; Batch build args
 
-(ert-deftest agents-claude-test-batch-build-args-minimal ()
+(ert-deftest agent-claude-test-batch-build-args-minimal ()
   "Build args with only required settings (no optional overrides)."
   (let ((claude-code-program "claude")
-        (agents-claude-batch-max-turns 10)
-        (agents-claude-batch-permission-mode nil)
-        (agents-claude-batch-allowed-tools nil)
-        (agents-claude-batch-system-prompt nil)
-        (agents-claude-batch-model nil))
-    (should (equal (agents-claude--build-cli-args "do stuff")
+        (agent-claude-batch-max-turns 10)
+        (agent-claude-batch-permission-mode nil)
+        (agent-claude-batch-allowed-tools nil)
+        (agent-claude-batch-system-prompt nil)
+        (agent-claude-batch-model nil))
+    (should (equal (agent-claude--build-cli-args "do stuff")
                    '("claude" "-p" "do stuff"
                      "--output-format" "stream-json"
                      "--verbose"
                      "--max-turns" "10")))))
 
-(ert-deftest agents-claude-test-batch-build-args-with-tools ()
+(ert-deftest agent-claude-test-batch-build-args-with-tools ()
   "Include --allowedTools when batch-allowed-tools is set."
   (let ((claude-code-program "claude")
-        (agents-claude-batch-max-turns 5)
-        (agents-claude-batch-permission-mode nil)
-        (agents-claude-batch-allowed-tools '("Read" "Write"))
-        (agents-claude-batch-system-prompt nil)
-        (agents-claude-batch-model nil))
-    (let ((args (agents-claude--build-cli-args "test")))
+        (agent-claude-batch-max-turns 5)
+        (agent-claude-batch-permission-mode nil)
+        (agent-claude-batch-allowed-tools '("Read" "Write"))
+        (agent-claude-batch-system-prompt nil)
+        (agent-claude-batch-model nil))
+    (let ((args (agent-claude--build-cli-args "test")))
       (should (member "--allowedTools" args))
       (should (member "Read,Write" args)))))
 
-(ert-deftest agents-claude-test-batch-build-args-with-system-prompt ()
+(ert-deftest agent-claude-test-batch-build-args-with-system-prompt ()
   "Include --append-system-prompt when batch-system-prompt is set."
   (let ((claude-code-program "claude")
-        (agents-claude-batch-max-turns 5)
-        (agents-claude-batch-permission-mode nil)
-        (agents-claude-batch-allowed-tools nil)
-        (agents-claude-batch-system-prompt "Be concise")
-        (agents-claude-batch-model nil))
-    (let ((args (agents-claude--build-cli-args "test")))
+        (agent-claude-batch-max-turns 5)
+        (agent-claude-batch-permission-mode nil)
+        (agent-claude-batch-allowed-tools nil)
+        (agent-claude-batch-system-prompt "Be concise")
+        (agent-claude-batch-model nil))
+    (let ((args (agent-claude--build-cli-args "test")))
       (should (member "--append-system-prompt" args))
       (should (member "Be concise" args)))))
 
-(ert-deftest agents-claude-test-batch-build-args-with-model ()
+(ert-deftest agent-claude-test-batch-build-args-with-model ()
   "Include --model when batch-model is set."
   (let ((claude-code-program "claude")
-        (agents-claude-batch-max-turns 5)
-        (agents-claude-batch-permission-mode nil)
-        (agents-claude-batch-allowed-tools nil)
-        (agents-claude-batch-system-prompt nil)
-        (agents-claude-batch-model "opus"))
-    (let ((args (agents-claude--build-cli-args "test")))
+        (agent-claude-batch-max-turns 5)
+        (agent-claude-batch-permission-mode nil)
+        (agent-claude-batch-allowed-tools nil)
+        (agent-claude-batch-system-prompt nil)
+        (agent-claude-batch-model "opus"))
+    (let ((args (agent-claude--build-cli-args "test")))
       (should (member "--model" args))
       (should (member "opus" args)))))
 
-(ert-deftest agents-claude-test-batch-build-args-all-options ()
+(ert-deftest agent-claude-test-batch-build-args-all-options ()
   "All optional flags appear when all batch variables are set."
   (let ((claude-code-program "/usr/bin/claude")
-        (agents-claude-batch-max-turns 20)
-        (agents-claude-batch-permission-mode "bypassPermissions")
-        (agents-claude-batch-allowed-tools '("Bash" "Read"))
-        (agents-claude-batch-system-prompt "Be thorough")
-        (agents-claude-batch-model "sonnet"))
-    (let ((args (agents-claude--build-cli-args "hello")))
+        (agent-claude-batch-max-turns 20)
+        (agent-claude-batch-permission-mode "bypassPermissions")
+        (agent-claude-batch-allowed-tools '("Bash" "Read"))
+        (agent-claude-batch-system-prompt "Be thorough")
+        (agent-claude-batch-model "sonnet"))
+    (let ((args (agent-claude--build-cli-args "hello")))
       (should (equal (car args) "/usr/bin/claude"))
       (should (member "--permission-mode" args))
       (should (member "bypassPermissions" args))
@@ -462,27 +462,27 @@
       (should (member "--max-turns" args))
       (should (member "20" args)))))
 
-(ert-deftest agents-claude-test-batch-env-preserves-api-key-without-account ()
+(ert-deftest agent-claude-test-batch-env-preserves-api-key-without-account ()
   "Preserve `ANTHROPIC_API_KEY' when no account config is active."
   (let ((process-environment '("ANTHROPIC_API_KEY=key" "CLAUDE_CODE=1"))
-        (agents-claude-accounts nil)
-        (agents-claude--current-account nil))
+        (agent-claude-accounts nil)
+        (agent-claude--current-account nil))
     (should (member "ANTHROPIC_API_KEY=key"
-                    (agents-claude--batch-process-environment)))))
+                    (agent-claude--batch-process-environment)))))
 
-(ert-deftest agents-claude-test-batch-env-strips-api-key-with-account ()
+(ert-deftest agent-claude-test-batch-env-strips-api-key-with-account ()
   "Strip conflicting auth when `CLAUDE_CONFIG_DIR' is set."
   (let ((process-environment '("ANTHROPIC_API_KEY=key" "CLAUDE_CODE=1"))
-        (agents-claude-accounts '(("work" . "/tmp/claude-work")))
-        (agents-claude--current-account "work"))
-    (let ((env (agents-claude--batch-process-environment)))
+        (agent-claude-accounts '(("work" . "/tmp/claude-work")))
+        (agent-claude--current-account "work"))
+    (let ((env (agent-claude--batch-process-environment)))
       (should (member "CLAUDE_CONFIG_DIR=/tmp/claude-work" env))
       (should-not (member "ANTHROPIC_API_KEY=key" env))
       (should-not (member "CLAUDE_CODE=1" env)))))
 
-(ert-deftest agents-claude-test-diff-file-in-session-uses-directory-boundary ()
+(ert-deftest agent-claude-test-diff-file-in-session-uses-directory-boundary ()
   "Do not treat sibling paths with the same prefix as inside a session."
-  (let* ((session-dir (make-temp-file "agents-proj" t))
+  (let* ((session-dir (make-temp-file "agent-proj" t))
          (sibling-dir (concat (directory-file-name session-dir) "-other")))
     (unwind-protect
         (progn
@@ -492,86 +492,86 @@
             (cl-letf (((symbol-function 'monet--session-directory)
                        (lambda (_session) session-dir)))
               (should-not
-               (agents-claude--diff-file-in-session-p
+               (agent-claude--diff-file-in-session-p
                 (current-buffer) 'session)))))
       (delete-directory session-dir t)
       (delete-directory sibling-dir t))))
 
 ;;;; Has statusline key
 
-(ert-deftest agents-claude-test-has-statusline-key-present ()
+(ert-deftest agent-claude-test-has-statusline-key-present ()
   "Return non-nil when buffer contains a statusLine JSON key."
   (with-temp-buffer
     (insert "{\n  \"statusLine\": {}\n}")
-    (should (agents-claude--has-statusline-key-p))))
+    (should (agent-claude--has-statusline-key-p))))
 
-(ert-deftest agents-claude-test-has-statusline-key-absent ()
+(ert-deftest agent-claude-test-has-statusline-key-absent ()
   "Return nil when buffer lacks a statusLine JSON key."
   (with-temp-buffer
     (insert "{\n  \"someOtherKey\": true\n}")
-    (should-not (agents-claude--has-statusline-key-p))))
+    (should-not (agent-claude--has-statusline-key-p))))
 
-(ert-deftest agents-claude-test-has-statusline-key-empty ()
+(ert-deftest agent-claude-test-has-statusline-key-empty ()
   "Return nil in an empty buffer."
   (with-temp-buffer
-    (should-not (agents-claude--has-statusline-key-p))))
+    (should-not (agent-claude--has-statusline-key-p))))
 
 ;;;; Has stop hook
 
-(ert-deftest agents-claude-test-has-stop-hook-present ()
+(ert-deftest agent-claude-test-has-stop-hook-present ()
   "Return non-nil when buffer contains a Stop JSON key."
   (with-temp-buffer
     (insert "{\n  \"hooks\": {\n    \"Stop\": []\n  }\n}")
-    (should (agents-claude--has-stop-hook-p))))
+    (should (agent-claude--has-stop-hook-p))))
 
-(ert-deftest agents-claude-test-has-stop-hook-absent ()
+(ert-deftest agent-claude-test-has-stop-hook-absent ()
   "Return nil when buffer lacks a Stop JSON key."
   (with-temp-buffer
     (insert "{\n  \"hooks\": {}\n}")
-    (should-not (agents-claude--has-stop-hook-p))))
+    (should-not (agent-claude--has-stop-hook-p))))
 
-(ert-deftest agents-claude-test-has-stop-hook-empty ()
+(ert-deftest agent-claude-test-has-stop-hook-empty ()
   "Return nil in an empty buffer."
   (with-temp-buffer
-    (should-not (agents-claude--has-stop-hook-p))))
+    (should-not (agent-claude--has-stop-hook-p))))
 
 ;;;; Settings setup
 
-(defun agents-claude-test--executable ()
+(defun agent-claude-test--executable ()
   "Return a temporary executable file path."
-  (let ((file (make-temp-file "agents-exec")))
+  (let ((file (make-temp-file "agent-exec")))
     (set-file-modes file #o755)
     file))
 
-(ert-deftest agents-claude-test-ensure-statusline-config-valid-empty-json ()
+(ert-deftest agent-claude-test-ensure-statusline-config-valid-empty-json ()
   "Write a valid statusLine object into an empty settings object."
   (let ((settings (make-temp-file "statusline-test" nil ".json"))
-        (script (agents-claude-test--executable)))
+        (script (agent-claude-test--executable)))
     (unwind-protect
-        (let ((agents-claude-statusline-script script))
+        (let ((agent-claude-statusline-script script))
           (with-temp-file settings (insert "{}"))
-          (should (agents-claude-ensure-statusline-config settings))
-          (let* ((data (agents-claude--read-json-object settings))
+          (should (agent-claude-ensure-statusline-config settings))
+          (let* ((data (agent-claude--read-json-object settings))
                  (statusline (gethash "statusLine" data)))
             (should (hash-table-p statusline))
             (should (string-match-p (regexp-quote script)
                                     (gethash "command" statusline)))
-            (should (string-match-p "AGENTS_CLAUDE_STATUS_DIR="
+            (should (string-match-p "AGENT_CLAUDE_STATUS_DIR="
                                     (gethash "command" statusline)))
             (should (= (gethash "padding" statusline) 0))))
       (delete-file settings)
       (delete-file script))))
 
-(ert-deftest agents-claude-test-ensure-hooks-config-valid-empty-json ()
+(ert-deftest agent-claude-test-ensure-hooks-config-valid-empty-json ()
   "Write Stop and Notification hooks into an empty settings object."
   (let ((settings (make-temp-file "hooks-test" nil ".json"))
-        (wrapper (agents-claude-test--executable)))
+        (wrapper (agent-claude-test--executable)))
     (unwind-protect
-        (let ((agents-claude-hook-wrapper wrapper))
+        (let ((agent-claude-hook-wrapper wrapper))
           (with-temp-file settings (insert "{}"))
-          (should (agents-claude-ensure-stop-hook-config settings))
-          (should (agents-claude-ensure-notification-hook-config settings))
-          (let* ((data (agents-claude--read-json-object settings))
+          (should (agent-claude-ensure-stop-hook-config settings))
+          (should (agent-claude-ensure-notification-hook-config settings))
+          (let* ((data (agent-claude--read-json-object settings))
                  (hooks (gethash "hooks" data)))
             (should (hash-table-p hooks))
             (should (gethash "Stop" hooks))
@@ -581,45 +581,45 @@
 
 ;;;; Batch collect todos
 
-(ert-deftest agents-claude-test-batch-collect-todos-buffer-scope ()
+(ert-deftest agent-claude-test-batch-collect-todos-buffer-scope ()
   "Collect TODO entries from the entire buffer."
   (with-temp-buffer
     (org-mode)
     (insert "* TODO First task\nSome body text\n* TODO Second task\nMore body\n* DONE Finished\nDone body\n")
-    (let ((entries (agents-claude--batch-collect-todos 'buffer)))
+    (let ((entries (agent-claude--batch-collect-todos 'buffer)))
       (should (= (length entries) 2))
       (should (equal (plist-get (nth 0 entries) :title) "First task"))
       (should (string-match-p "Some body text" (plist-get (nth 0 entries) :body)))
       (should (equal (plist-get (nth 1 entries) :title) "Second task")))))
 
-(ert-deftest agents-claude-test-batch-collect-todos-skips-done ()
+(ert-deftest agent-claude-test-batch-collect-todos-skips-done ()
   "DONE entries are excluded from the collected list."
   (with-temp-buffer
     (org-mode)
     (insert "* DONE Completed\nBody\n* TODO Active\nActive body\n")
-    (let ((entries (agents-claude--batch-collect-todos 'buffer)))
+    (let ((entries (agent-claude--batch-collect-todos 'buffer)))
       (should (= (length entries) 1))
       (should (equal (plist-get (nth 0 entries) :title) "Active")))))
 
-(ert-deftest agents-claude-test-batch-collect-todos-empty-body ()
+(ert-deftest agent-claude-test-batch-collect-todos-empty-body ()
   "TODO entries with no body text get an empty string body."
   (with-temp-buffer
     (org-mode)
     (insert "* TODO No body entry\n* TODO Another entry\n")
-    (let ((entries (agents-claude--batch-collect-todos 'buffer)))
+    (let ((entries (agent-claude--batch-collect-todos 'buffer)))
       (should (= (length entries) 2))
       (should (equal (plist-get (nth 0 entries) :title) "No body entry"))
       (should (string-empty-p (plist-get (nth 0 entries) :body))))))
 
-(ert-deftest agents-claude-test-batch-collect-todos-no-todos ()
+(ert-deftest agent-claude-test-batch-collect-todos-no-todos ()
   "Return nil when buffer has no TODO entries."
   (with-temp-buffer
     (org-mode)
     (insert "* Regular heading\nSome text\n* Another heading\n")
-    (let ((entries (agents-claude--batch-collect-todos 'buffer)))
+    (let ((entries (agent-claude--batch-collect-todos 'buffer)))
       (should (null entries)))))
 
-(ert-deftest agents-claude-test-batch-collect-todos-subtree-scope ()
+(ert-deftest agent-claude-test-batch-collect-todos-subtree-scope ()
   "Collect only TODO entries within the current subtree."
   (with-temp-buffer
     (org-mode)
@@ -627,9 +627,9 @@
     (goto-char (point-min))
     (save-restriction
       (org-narrow-to-subtree)
-      (let ((entries (agents-claude--batch-collect-todos 'subtree)))
+      (let ((entries (agent-claude--batch-collect-todos 'subtree)))
         (should (= (length entries) 1))
         (should (equal (plist-get (nth 0 entries) :title) "Child task"))))))
 
-(provide 'agents-claude-test)
-;;; agents-claude-test.el ends here
+(provide 'agent-claude-test)
+;;; agent-claude-test.el ends here

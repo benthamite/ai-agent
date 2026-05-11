@@ -9,9 +9,9 @@ if command -v shasum >/dev/null 2>&1; then
 elif command -v sha256sum >/dev/null 2>&1; then
     SAFE_NAME=$(printf '%s' "$CLAUDE_BUFFER_NAME" | sha256sum | awk '{print $1}')
 else
-    echo "agents: neither shasum nor sha256sum is available" >&2
+    echo "agent: neither shasum nor sha256sum is available" >&2
     exit 1
 fi
-STATUS_DIR=${AGENTS_CLAUDE_STATUS_DIR:-${TMPDIR:-/tmp}/claude-code-status}
+STATUS_DIR=${AGENT_CLAUDE_STATUS_DIR:-${TMPDIR:-/tmp}/claude-code-status}
 mkdir -p "$STATUS_DIR"
 printf '%s' "$input" > "$STATUS_DIR/${SAFE_NAME}.json"

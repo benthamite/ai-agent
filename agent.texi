@@ -1,0 +1,332 @@
+\input texinfo    @c -*- texinfo -*-
+@c %**start of header
+@setfilename agent.info
+@settitle agent: AI coding agent integration for Emacs
+@documentencoding UTF-8
+@documentlanguage en
+@c %**end of header
+
+@dircategory Emacs misc features
+@direntry
+* Agent: (agent). AI coding agent integration for Emacs.
+@end direntry
+
+@finalout
+@titlepage
+@title agent: AI coding agent integration for Emacs
+@author Pablo Stafforini (@email{pablo@@stafforini.com})
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top agent: AI coding agent integration for Emacs
+
+This manual describes the features and customization options for the Emacs Lisp package @samp{agent.el}.
+
+@end ifnottex
+
+@menu
+* Overview::
+* User options::
+* Commands::
+* Functions::
+* Transient menu::
+* Indices::
+
+@detailmenu
+--- The Detailed Node Listing ---
+
+User options
+
+* Shared session behavior::
+* Claude Code backend::
+* Codex backend::
+
+Commands
+
+* Shared commands::
+* Claude Code commands::
+* Codex commands::
+
+Functions
+
+* Backend registration and display::
+* Modeline and status helpers::
+
+Indices
+
+* Function index::
+* Variable index::
+
+@end detailmenu
+@end menu
+
+@node Overview
+@chapter Overview
+
+@samp{agent.el} collects the Emacs integration layer for AI coding command-line tools. It provides a shared session model, a unified transient menu, notification handling, terminal helpers, and backend modules for Claude Code and Codex.
+
+The package is split into a small core and backend modules. The core file, @samp{agent.el}, is backend-agnostic: it knows how to register AI tools, find their buffers, dispatch shared commands, render backend icons, assign stable session keys, and present a single menu. @samp{agent-claude.el} integrates @samp{claude-code.el} with Claude-specific account switching, status polling, usage polling, branch navigation, batch TODO processing, and hook setup. @samp{agent-codex.el} integrates @samp{codex.el} with Codex-specific theme sync, skill execution, handoff, auditing, debugging, and modeline helpers.
+
+The main workflow is to load @samp{agent.el}, then require the backend modules you use. Once the Claude and Codex modules are loaded, @samp{M-x agent-menu} and @samp{M-x agent-start-or-switch} operate across both tools. Sessions are grouped by account when the backend exposes account metadata, highlighted when waiting for input, and disambiguated by project and instance name when several sessions share a directory.
+
+The package depends on @samp{transient} for menus and @samp{consult} for completion. The Claude backend expects @samp{claude-code.el}. The Codex backend expects @samp{codex.el}. Optional integrations use packages such as @samp{yasnippet}, @samp{doom-modeline}, @samp{gptel}, @samp{agent-log}, and @samp{monet} when those are available.
+
+@node User options
+@chapter User options
+
+@menu
+* Shared session behavior::
+* Claude Code backend::
+* Codex backend::
+@end menu
+
+@node Shared session behavior
+@section Shared session behavior
+
+@vindex agent-protect-buffers
+@vindex agent-alert-on-ready
+@vindex agent-alert-style
+@vindex agent-alert-sound
+@vindex agent-alert-sound-player
+@vindex agent-backtrace-file
+@vindex agent-sync-theme
+@vindex agent-sigwinch-delay
+The user option @code{agent-protect-buffers} is a boolean that defaults to @code{t}. When enabled, killing a live AI session buffer prompts for confirmation through @code{agent-protect-buffer}. Buffers whose processes have already exited are allowed to die without the prompt.
+
+The user option @code{agent-alert-on-ready} is a boolean that defaults to @code{nil}. When enabled, backend notification handlers can call @code{agent-notify} to emit visual and/or audible alerts when a session is waiting for input. @code{agent-alert-style} selects @code{visual}, @code{sound}, or @code{both}; it defaults to @code{both}. @code{agent-alert-sound} defaults to @code{nil}; set it to a sound file to enable sound alerts. @code{agent-alert-sound-player} optionally names an external sound player when Emacs sound support is unavailable.
+
+The user option @code{agent-backtrace-file} controls where @code{agent-save-backtrace}, @code{agent-claude-debug-backtrace}, and @code{agent-codex-debug-backtrace} write Emacs backtraces. It defaults to a file in @code{temporary-file-directory}.
+
+The user option @code{agent-sync-theme} is a boolean that defaults to @code{nil}. When enabled, theme changes in Emacs are persisted through each registered backend's theme-sync handler. This updates configuration files for new or restarted CLI sessions without sending theme commands into active terminal conversations.
+
+The user option @code{agent-sigwinch-delay} is a number of seconds and defaults to @samp{0.5}. It controls how long @code{agent-fix-rendering} waits before sending @samp{SIGWINCH} to a terminal process. Increase it if an AI CLI reads the terminal size before the @samp{eat} window has settled.
+
+Snippet helpers use @samp{yasnippet} and @samp{consult-yasnippet} only when those optional packages are loaded.
+
+@node Claude Code backend
+@section Claude Code backend
+
+@vindex agent-claude-warn-kill-with-branches
+@vindex agent-claude-fork-worktree-directory
+@vindex agent-claude-log-directory
+@vindex agent-claude-status-interval
+@vindex agent-claude-usage-interval
+@vindex agent-claude-usage-max-interval
+@vindex agent-claude-accounts
+@vindex agent-claude-account-file
+@vindex agent-claude-settings-file
+@vindex agent-claude-hook-wrapper
+@vindex agent-claude-statusline-script
+@vindex agent-claude-status-directory
+@vindex agent-claude-handoff-file
+@vindex agent-claude-batch-allowed-tools
+@vindex agent-claude-batch-permission-mode
+@vindex agent-claude-batch-max-turns
+@vindex agent-claude-batch-system-prompt
+@vindex agent-claude-batch-model
+@vindex agent-claude-run-skill-model
+@vindex agent-claude-audit-skills
+@vindex agent-claude-audit-project-directories
+@vindex agent-claude-org-todo-in-progress-keyword
+@vindex agent-claude-debug-backtrace-model
+@vindex agent-claude-debug-backtrace-backend
+The Claude backend options control account selection, session metadata, non-interactive execution, and branch workflows. @code{agent-claude-accounts} is an alist of account names to Claude configuration directories, and @code{agent-claude-account-file} stores the selected account across Emacs sessions. Use @code{agent-claude-select-account} or the account infix in @code{agent-menu} to switch accounts before starting a new session.
+
+Status and usage polling are controlled by integer intervals. @code{agent-claude-status-interval} defaults to @samp{5} seconds and reads status JSON emitted by the bundled statusline script. @code{agent-claude-usage-interval} defaults to @samp{300} seconds and backs off up to @code{agent-claude-usage-max-interval}, which defaults to @samp{900} seconds.
+
+Batch execution options are passed to @samp{claude -p}. @code{agent-claude-batch-permission-mode} defaults to @samp{"auto"}, @code{agent-claude-batch-max-turns} defaults to @samp{30}, and the allowed tool, model, and appended-system-prompt options let you narrow or expand what non-interactive Claude tasks may do.
+
+Branch and buffer safety options default conservatively. @code{agent-claude-warn-kill-with-branches} defaults to @code{t} and warns before killing a session that belongs to a branch tree. @code{agent-claude-fork-worktree-directory} defaults to a cache directory so isolated branch worktrees do not interfere with cloud sync. @code{agent-claude-handoff-file} defaults to a file in @code{temporary-file-directory}.
+
+Claude hook setup is explicit. @code{agent-claude-settings-file} names the settings file updated by @code{agent-claude-setup-config} and the individual ensure commands. @code{agent-claude-hook-wrapper} points to the upstream @samp{claude-code} hook wrapper, while @code{agent-claude-statusline-script} points to the bundled statusline helper. @code{agent-claude-status-directory} controls where the helper writes per-buffer status JSON files. Loading the backend does not modify Claude Code configuration.
+
+@node Codex backend
+@section Codex backend
+
+@vindex agent-codex-handoff-file
+@vindex agent-codex-accounts
+@vindex agent-codex-account-file
+@vindex agent-codex-skill-directories
+@vindex agent-codex-audit-skills
+@vindex agent-codex-audit-project-directories
+@vindex agent-codex-exec-approval-policy
+@vindex agent-codex-exec-sandbox-mode
+@vindex agent-codex-exec-skip-git-repo-check
+@vindex agent-codex-debug-backtrace-model
+@vindex agent-codex-debug-backtrace-backend
+The Codex backend options control account selection, handoff, skill discovery, non-interactive execution, project auditing, and backtrace debugging. @code{agent-codex-accounts} is an alist of account names to Codex home directories, and @code{agent-codex-account-file} stores the selected account across Emacs sessions. Account homes keep credentials such as @samp{auth.json} separate, while shared Codex state such as @samp{config.toml}, @samp{hooks.json}, skills, sessions, and @samp{history.jsonl} is symlinked from @samp{~/.codex/} so hooks, skills, project trust, and chat history remain available after switching accounts. Use @code{agent-codex-select-account} or the Codex account infix in @code{agent-menu} to switch accounts before starting a new session. @code{agent-codex-handoff-file} defaults to a file in @code{temporary-file-directory} and is read by @code{agent-codex-handoff} after the Codex handoff skill writes next-session instructions.
+
+@code{agent-codex-skill-directories} is a list of additional directories scanned for Codex skills. The backend also scans standard Codex skill locations and project-local skill directories. @code{agent-codex-audit-skills} defaults to the code, design, and interpretability audit skills, while @code{agent-codex-audit-project-directories} stores completion candidates for the audit directory prompt.
+
+@code{agent-codex-exec-approval-policy}, @code{agent-codex-exec-sandbox-mode}, and @code{agent-codex-exec-skip-git-repo-check} configure the non-interactive Codex calls used by skill and audit workflows. The approval policy is passed as a top-level Codex CLI option before the @samp{exec} subcommand, while the sandbox and repository-check options are passed to @samp{codex exec} itself.
+
+@code{agent-codex-debug-backtrace-model} and @code{agent-codex-debug-backtrace-backend} configure the @samp{gptel} request used by @code{agent-codex-debug-backtrace} to identify likely culprit packages from an Emacs backtrace.
+
+@node Commands
+@chapter Commands
+
+@menu
+* Shared commands::
+* Claude Code commands::
+* Codex commands::
+@end menu
+
+@node Shared commands
+@section Shared commands
+
+@findex agent-menu
+@findex agent-start-or-switch
+@findex agent-jump-to-waiting
+@findex agent-run-skill
+@findex agent-post-push-ci
+@findex agent-handoff
+@findex agent-audit-project
+@findex agent-debug-backtrace
+@findex agent-exit
+@findex agent-restart
+@findex agent-toggle-alert
+@findex agent-fix-rendering
+@findex agent-disable-scrollback-truncation
+@findex agent-snippet-tab
+The command @code{agent-menu} opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, alert toggles, and terminal maintenance. Backend modules append their own suffixes to the same menu when loaded.
+
+The command @code{agent-start-or-switch} is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
+
+The command @code{agent-run-skill} discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend. Claude and Codex backends scan global and project-local programmatic skill directories, using both @code{project-current} and nearby tool directories as project-root signals, so batch-only skills can be run from this command without being loaded into ordinary interactive agent sessions.
+
+The command @code{agent-post-push-ci} runs the @code{post-push-ci} skill through the
+selected backend with @samp{--no-push --commit HEAD}. Use it after a push has
+already happened and you want an agent to inspect GitHub Actions failures, fix
+the root cause, and continue the authorized CI closeout loop.
+
+The commands @code{agent-handoff}, @code{agent-audit-project}, @code{agent-debug-backtrace}, @code{agent-exit}, and @code{agent-restart} resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
+
+@code{agent-before-exit-functions} can delay @code{agent-exit} for cleanup work.
+Each function receives the resolved backend and session buffer; returning nil
+aborts the exit.
+
+Set @code{agent-before-exit-skill-name} and
+@code{agent-before-exit-skill-directories} to submit an interactive skill before
+exiting matching sessions. @code{agent-run-skill-before-exit} uses
+@code{agent-skill-command-prefix-alist} so Claude sessions receive slash commands
+and Codex sessions receive dollar-prefixed skill commands, then submits the
+command and delays exit until the next @code{agent-exit} call.
+
+@node Claude Code commands
+@section Claude Code commands
+
+@findex agent-claude-start-or-switch
+@findex agent-claude-select-account
+@findex agent-claude-init-account
+@findex agent-claude-run-skill
+@findex agent-claude-batch-todos
+@findex agent-claude-send-todo-at-point
+@findex agent-claude-audit-project
+@findex agent-claude-debug-backtrace
+@findex agent-claude-handoff
+@findex agent-claude-restart
+@findex agent-claude-switch-branch
+@findex agent-claude-create-branch
+@findex agent-claude-ensure-statusline-config
+@findex agent-claude-ensure-stop-hook-config
+@findex agent-claude-ensure-notification-hook-config
+@findex agent-claude-setup-config
+The Claude commands expose workflows that are specific to Claude Code. @code{agent-claude-start-or-switch} starts Claude under the selected account or opens the unified switcher. @code{agent-claude-select-account} persists an account choice, and @code{agent-claude-init-account} prepares a new account directory with shared configuration files and symlinks.
+
+@code{agent-claude-run-skill}, @code{agent-claude-batch-todos}, and @code{agent-claude-send-todo-at-point} use non-interactive or interactive Claude sessions to run structured work. Batch TODO processing extracts Org headings, formats each heading and body as a prompt, runs entries sequentially, and records a summary buffer. Project audits refuse to auto-commit unless the target git worktree is clean before the audit starts.
+
+@code{agent-claude-create-branch} creates a new Claude branch from the current session. With isolated branching it creates a git worktree under @code{agent-claude-fork-worktree-directory} and links the branch session metadata into that project. @code{agent-claude-switch-branch} displays the branch tree and switches to, or resumes, the selected session.
+
+The setup command @code{agent-claude-setup-config} ensures that Claude's statusline, Stop hook, and Notification hook are present in @samp{~/.claude/settings.json}. The backend does not run setup automatically when loaded; run the setup command explicitly when installing or repairing hook configuration.
+
+@node Codex commands
+@section Codex commands
+
+@findex agent-codex-start-or-switch
+@findex agent-codex-select-account
+@findex agent-codex-run-skill
+@findex agent-codex-audit-project
+@findex agent-codex-debug-backtrace
+@findex agent-codex-handoff
+@findex agent-codex-restart
+@findex agent-codex-exit
+@findex agent-codex-resume
+@findex agent-codex-fork
+@findex agent-codex-setup-kill-on-exit
+The Codex commands mirror the shared workflows for the Codex CLI@. @code{agent-codex-start-or-switch} starts Codex under the selected account when no Codex sessions exist, otherwise it opens the shared switcher. @code{agent-codex-select-account} persists an account choice by name and applies it to new interactive sessions and non-interactive @samp{codex exec} runs. @code{agent-codex-run-skill} runs a skill non-interactively with @samp{codex exec}, using local skill metadata when available and falling back to a slash invocation otherwise. Additional programmatic skill directories are configured through @code{agent-codex-programmatic-skill-directories}.
+
+@code{agent-codex-audit-project} prompts for a project directory and runs each configured audit skill sequentially through @samp{codex exec}. @code{agent-codex-debug-backtrace} saves the current Emacs backtrace, asks @samp{gptel} to identify likely packages, and starts a Codex session in the selected package source directory with instructions to fix the bug.
+
+@code{agent-codex-handoff} reads @code{agent-codex-handoff-file}, kills the current Codex buffer, and starts a new session with the handoff prompt. @code{agent-codex-handoff-from-emacsclient} accepts the source buffer name from an @samp{emacsclient} argument, so agent-authored handoff commands can close the requesting session even though Emacs evaluates the form outside that buffer. @code{agent-codex-restart} resumes the current project with @samp{codex resume --last} after killing the old session. @code{agent-codex-resume} and @code{agent-codex-fork} expose the Codex CLI's resume and fork subcommands from the unified menu.
+
+@node Functions
+@chapter Functions
+
+@menu
+* Backend registration and display::
+* Modeline and status helpers::
+@end menu
+
+@node Backend registration and display
+@section Backend registration and display
+
+@findex agent-register-backend
+@findex agent-backend-icon
+@findex agent-svg-icon
+@findex agent-display-name
+@findex agent-parse-skill-frontmatter
+@findex agent-notify
+@findex agent-protect-buffer
+@findex agent-kill-session-buffer
+The function @code{agent-register-backend} registers an AI tool by associating a backend symbol with a property list of buffer predicates, session discovery functions, command senders, and optional command handlers. Backend modules call it at load time. Required keys are validated so the shared session layer can rely on a consistent interface.
+
+@code{agent-display-name} returns a human-readable label for a session buffer. It starts with the project name, adds an instance name when needed to disambiguate duplicates, and lets backends append their own suffixes. The Claude backend uses this to expose branch identity in the modeline and switcher.
+
+@code{agent-parse-skill-frontmatter} reads @samp{SKILL.md} frontmatter shared by Claude and Codex skill runners. It recognizes names, descriptions, argument hints, argument sources, argument choices, defaults, multiplicity, user-invocable flags, and model overrides.
+
+@code{agent-svg-icon} renders SVG strings as inline images, using the current face foreground when the SVG uses @samp{currentColor}. Backends use this for modeline and transient display and can fall back to text abbreviations when SVG rendering is unavailable.
+
+@node Modeline and status helpers
+@section Modeline and status helpers
+
+@findex agent-claude-status-model
+@findex agent-claude-status-cost
+@findex agent-claude-status-context-percent
+@findex agent-claude-status-token-count
+@findex agent-claude-status-duration-ms
+@findex agent-claude-status-session-usage
+@findex agent-claude-status-weekly-usage
+@findex agent-codex-status-model
+@findex agent-codex-status-duration-ms
+The Claude and Codex status helpers are intended for modeline integrations such as @samp{doom-modeline}. Claude status functions read the current session status JSON and expose model, cost, context, duration, and token information. Claude usage functions expose account-level utilization returned by the Anthropic usage endpoint. Codex status functions expose the configured model and elapsed session duration.
+
+@node Transient menu
+@chapter Transient menu
+
+@findex agent-menu
+Backend modules extend @code{agent-menu} through @code{transient-append-suffix} after the core menu is available, first removing their own existing suffixes so reloading does not duplicate or stale-position those entries. The base menu contains shared session, tool, alert, buffer, and option entries. The Claude module appends branch navigation, batch TODOs, TODO sending, log browsing, status polling, Claude account selection, and branch-kill warnings. The Codex module appends Codex resume/fork commands and Codex account selection. In the Options group, @samp{-c} selects the Claude account and @samp{-x} selects the Codex account so the two account selectors appear next to each other.
+
+Boolean menu infixes use a shared transient class that toggles the bound variable each time it is invoked. The theme-sync infix additionally calls @code{agent-sync-theme-now} when enabling theme sync, so backend configuration files are updated immediately.
+
+@node Indices
+@chapter Indices
+
+@menu
+* Function index::
+* Variable index::
+@end menu
+
+@node Function index
+@section Function index
+
+@printindex fn
+
+@node Variable index
+@section Variable index
+
+@printindex vr
+
+@bye
