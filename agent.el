@@ -56,7 +56,8 @@ When nil or empty, `agent-run-skill-before-exit' does nothing."
   :group 'agent)
 
 (defcustom agent-before-exit-skill-directories nil
-  "Directories whose sessions should run `agent-before-exit-skill-name'."
+  "Directories whose sessions should run `agent-before-exit-skill-name'.
+When nil, run the configured skill before exiting every session."
   :type '(repeat directory)
   :group 'agent)
 
@@ -70,6 +71,9 @@ When nil or empty, `agent-run-skill-before-exit' does nothing."
 (defvar-local agent--before-exit-skill-sent nil
   "Non-nil when the configured before-exit skill was sent in this buffer.")
 
+(defvar-local agent--before-exit-skill-exit-pending nil
+  "Non-nil when BUFFER should exit after its before-exit skill finishes.")
+
 ;;;; Backend registry
 
 (defvar agent-backends nil
@@ -82,6 +86,7 @@ Each entry is (SYMBOL . PLIST) where PLIST has keys:
   :extract-directory     function (buffer-name) -> directory string
   :extract-instance-name function (buffer-name) -> instance or nil
   :send-command          function (cmd &optional buffer)
+  :submit-command        function (cmd &optional buffer)
   :start                 function (arg extra-switches
                            &optional force-prompt force-switch)
   :start-new             function () -> buffer (start a new session)
@@ -925,16 +930,46 @@ skill command was submitted and exit should be delayed."
             (not (agent--before-exit-skill-directory-p backend buffer)))
         t
       (let ((command (agent--before-exit-skill-command backend))
+            (submit-command-fn (agent--backend-get backend :submit-command))
             (send-command-fn (agent--backend-get backend :send-command)))
-        (if (not (and command send-command-fn))
+        (if (not (and command (or submit-command-fn send-command-fn)))
             t
           (setq-local agent--before-exit-skill-sent t)
-          (funcall send-command-fn command buffer)
-          (when-let* ((send-return-fn (agent--backend-get backend :send-return)))
-            (funcall send-return-fn buffer))
-          (message "Started %s; run agent-exit again to close this session."
+          (setq-local agent--before-exit-skill-exit-pending t)
+          (if submit-command-fn
+              (funcall submit-command-fn command buffer)
+            (funcall send-command-fn command buffer)
+            (when-let* ((send-return-fn (agent--backend-get backend :send-return)))
+              (funcall send-return-fn buffer)))
+          (message "Started %s; this session will close when it finishes."
                    command)
           nil)))))
+
+(defun agent-exit-after-before-exit-skill (backend buffer)
+  "Exit BACKEND session BUFFER after its before-exit skill has finished."
+  (when (and (buffer-live-p buffer)
+             (buffer-local-value 'agent--before-exit-skill-exit-pending
+                                 buffer)
+             (agent--before-exit-ready-to-close-p backend buffer))
+    (with-current-buffer buffer
+      (setq-local agent--before-exit-skill-exit-pending nil)
+      (run-at-time 0 nil #'agent--exit-after-before-exit-skill backend buffer))
+    t))
+
+(defun agent--before-exit-ready-to-close-p (backend buffer)
+  "Return non-nil when BUFFER can close after a before-exit skill.
+Backends may veto closing while the submitted command is still
+unaccepted at the prompt."
+  (if-let* ((fn (agent--backend-get backend :before-exit-ready-to-close-p)))
+      (funcall fn buffer)
+    t))
+
+(defun agent--exit-after-before-exit-skill (backend buffer)
+  "Exit BACKEND session BUFFER without re-running before-exit hooks."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when-let* ((fn (agent--backend-get backend :exit)))
+        (call-interactively fn)))))
 
 (defun agent--before-exit-skill-configured-p ()
   "Return non-nil when a before-exit skill is configured."
@@ -943,10 +978,11 @@ skill command was submitted and exit should be delayed."
 
 (defun agent--before-exit-skill-directory-p (backend buffer)
   "Return non-nil if BACKEND session BUFFER is in a configured directory."
-  (when-let* ((directory (agent--buffer-directory backend buffer)))
-    (cl-some (lambda (candidate)
-               (file-in-directory-p directory (file-truename candidate)))
-             agent-before-exit-skill-directories)))
+  (or (null agent-before-exit-skill-directories)
+      (when-let* ((directory (agent--buffer-directory backend buffer)))
+        (cl-some (lambda (candidate)
+                   (file-in-directory-p directory (file-truename candidate)))
+                 agent-before-exit-skill-directories))))
 
 (defun agent--buffer-directory (backend buffer)
   "Return the normalized directory for BACKEND session BUFFER."

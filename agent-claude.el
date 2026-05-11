@@ -1158,9 +1158,10 @@ elicitation_dialog notifications."
           (pcase ntype
             ("idle_prompt"
              (setq agent--waiting-for-input (current-time))
-             (agent-claude-notify
-              "Claude ready"
-              (format "%s: waiting for your response" name)))
+             (unless (agent-exit-after-before-exit-skill 'claude-code buf)
+               (agent-claude-notify
+                "Claude ready"
+                (format "%s: waiting for your response" name))))
             ("permission_prompt"
              (agent-claude-notify
               "Claude needs approval"
@@ -1214,7 +1215,8 @@ MESSAGE is a plist with :type, :buffer-name, :json-data, and
   (when (eq (plist-get message :type) 'stop)
     (when-let* ((buf (get-buffer (plist-get message :buffer-name))))
       (with-current-buffer buf
-        (agent-claude--scroll-to-bottom buf))))
+        (unless (agent-exit-after-before-exit-skill 'claude-code buf)
+          (agent-claude--scroll-to-bottom buf)))))
   nil)
 
 (defun agent-claude--scroll-to-bottom (buffer)

@@ -8,7 +8,7 @@
 
 @dircategory Emacs misc features
 @direntry
-* Agent: (agent). AI coding agent integration for Emacs.
+* Agent: (agent).       AI coding agent integration for Emacs.
 @end direntry
 
 @finalout
@@ -213,7 +213,20 @@ Set @code{agent-before-exit-skill-name} and
 exiting matching sessions. @code{agent-run-skill-before-exit} uses
 @code{agent-skill-command-prefix-alist} so Claude sessions receive slash commands
 and Codex sessions receive dollar-prefixed skill commands, then submits the
-command and delays exit until the next @code{agent-exit} call.
+command. When the backend reports that the skill run has finished, the
+session exits automatically; ordinary ready notifications are left unchanged.
+Leave @code{agent-before-exit-skill-directories} nil to run the skill before
+exiting every session.
+
+Backends can veto that automatic close while the submitted skill invocation is
+still visible as unaccepted prompt input. Codex uses this to avoid closing a
+session when the dollar-prefixed skill name was inserted but not submitted,
+while ignoring Codex's visible placeholder and autosuggestion text.
+
+Backends can provide an atomic submit operation for before-exit commands.
+Codex delegates this to @samp{codex.el}'s target-buffer submit helper so the skill
+command is inserted and submitted before the terminal buffer is displayed
+again.
 
 @node Claude Code commands
 @section Claude Code commands

@@ -179,6 +179,8 @@ Source: SVG Repo (CC0).")
         :extract-instance-name #'codex--extract-instance-name-from-buffer-name
         :send-command #'agent-codex-send-command
         :send-return #'agent-codex-send-return
+        :submit-command #'agent-codex-submit-command
+        :before-exit-ready-to-close-p #'agent-codex-before-exit-ready-to-close-p
         :start #'codex--start
         :start-new #'agent-codex--start-with-account
         :program "codex"
@@ -211,9 +213,37 @@ Source: SVG Repo (CC0).")
   "Submit the active prompt in BUFFER's Codex session."
   (when-let* ((codex-buffer (agent-codex--target-buffer buffer)))
     (with-current-buffer codex-buffer
+      (sit-for 0.1)
       (codex--term-send-action codex-terminal-backend :return)
       (display-buffer codex-buffer))
     codex-buffer))
+
+(defun agent-codex-submit-command (cmd &optional buffer)
+  "Insert CMD into BUFFER's Codex prompt and submit it atomically."
+  (when-let* ((codex-buffer (agent-codex--target-buffer buffer)))
+    (codex--send-command-to-buffer cmd codex-buffer)))
+
+(defun agent-codex-before-exit-ready-to-close-p (&optional buffer)
+  "Return non-nil when BUFFER has no pending Codex prompt input."
+  (when-let* ((codex-buffer (agent-codex--target-buffer buffer)))
+    (with-current-buffer codex-buffer
+      (not (agent-codex--current-prompt-input)))))
+
+(defun agent-codex--current-prompt-input ()
+  "Return the current Codex prompt input, or nil when empty."
+  (save-excursion
+    (goto-char (point-max))
+    (if (re-search-backward "^›[ \t]*\\([^\n]*\\)$" nil t)
+        (let ((input (string-trim (match-string-no-properties 1))))
+          (unless (or (string-empty-p input)
+                      (agent-codex--prompt-autosuggestion-p input))
+            input))
+      nil)))
+
+(defun agent-codex--prompt-autosuggestion-p (input)
+  "Return non-nil when INPUT is Codex placeholder text."
+  (and (fboundp 'codex--known-prompt-autosuggestion-p)
+       (codex--known-prompt-autosuggestion-p input)))
 
 (defun agent-codex--target-buffer (buffer)
   "Return BUFFER when live, otherwise prompt for a Codex buffer."
@@ -524,10 +554,11 @@ The :type field is a string from the hook wrapper (e.g. \"Stop\")."
             (pcase hook-type
               ("Stop"
                (setq agent--waiting-for-input (current-time))
-               (agent-notify
-                "Codex ready"
-                (format "%s: waiting for your response" name))
-               (agent--scroll-to-bottom buf))
+               (unless (agent-exit-after-before-exit-skill 'codex buf)
+                 (agent-notify
+                  "Codex ready"
+                  (format "%s: waiting for your response" name))
+                 (agent--scroll-to-bottom buf)))
               ("Notification"
                (agent-notify
                 "Codex"

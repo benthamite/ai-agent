@@ -147,6 +147,50 @@
                    '((string "$session-learning-capture")
                      (action :return))))))
 
+(ert-deftest agent-codex-test-submit-command-delegates-to-codex-buffer-submit ()
+  "Submit Codex command text through Codex's target-buffer primitive."
+  (let (events expected-buffer)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (setq expected-buffer buf)
+        (cl-letf (((symbol-function 'codex--send-command-to-buffer)
+                   (lambda (cmd buffer)
+                     (push (list cmd buffer) events))))
+          (agent-codex-submit-command "$session-learning-capture" buf))))
+    (should (equal (nreverse events)
+                   (list (list "$session-learning-capture"
+                               expected-buffer))))))
+
+(ert-deftest agent-codex-test-before-exit-ready-vetoes-pending-prompt ()
+  "Do not auto-close while Codex still has prompt input."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "› $session-learning-capture\n\n  gpt-5.5 medium · /tmp")
+          (should-not (agent-codex-before-exit-ready-to-close-p buf)))
+      (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-before-exit-ready-allows-empty-prompt ()
+  "Allow auto-close when Codex is back at an empty prompt."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "› \n\n  gpt-5.5 medium · /tmp")
+          (should (agent-codex-before-exit-ready-to-close-p buf)))
+      (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-before-exit-ready-ignores-autosuggestion ()
+  "Allow auto-close when Codex shows placeholder prompt text."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'codex--known-prompt-autosuggestion-p)
+                   (lambda (input)
+                     (string= input "Summarize recent commits"))))
+          (with-current-buffer buf
+            (insert "› Summarize recent commits\n\n  gpt-5.5 medium · /tmp")
+            (should (agent-codex-before-exit-ready-to-close-p buf))))
+      (kill-buffer buf))))
+
 ;;;; Theme sync
 
 (ert-deftest agent-codex-test-sync-theme-updates-existing-tui-section ()

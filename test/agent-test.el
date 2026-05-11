@@ -202,11 +202,35 @@
         (should ran)))))
 
 (ert-deftest agent-test-run-skill-before-exit-submits-codex-skill ()
-  "Submit a Codex skill and abort the first exit in matching directories."
+  "Submit a Codex skill and abort the first exit globally by default."
   (let ((agent-backends nil)
         (agent-before-exit-skill-name "session-retro")
         (agent-before-exit-skill-directories nil)
         events)
+    (with-temp-buffer
+      (let* ((dir (file-name-as-directory default-directory))
+             (buf (current-buffer))
+             (agent-before-exit-skill-directories nil))
+        (agent-register-backend
+         'codex
+         (agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) dir)
+          :send-command (lambda (cmd &optional _buffer)
+                          (push (list 'command cmd) events))
+          :send-return (lambda (&optional _buffer) (push 'return events))))
+        (should-not (agent-run-skill-before-exit 'codex buf))
+        (should (equal (nreverse events)
+                       '((command "$session-retro") return)))
+        (should agent--before-exit-skill-sent)
+        (should agent--before-exit-skill-exit-pending)
+        (should (agent-run-skill-before-exit 'codex buf))))))
+
+(ert-deftest agent-test-run-skill-before-exit-submits-in-matching-directory ()
+  "Submit a Codex skill in explicitly configured directories."
+  (let ((agent-backends nil)
+        (agent-before-exit-skill-name "session-retro")
+        (events nil))
     (with-temp-buffer
       (let* ((dir (file-name-as-directory default-directory))
              (buf (current-buffer))
@@ -221,9 +245,27 @@
           :send-return (lambda (&optional _buffer) (push 'return events))))
         (should-not (agent-run-skill-before-exit 'codex buf))
         (should (equal (nreverse events)
-                       '((command "$session-retro") return)))
-        (should agent--before-exit-skill-sent)
-        (should (agent-run-skill-before-exit 'codex buf))))))
+                       '((command "$session-retro") return)))))))
+
+(ert-deftest agent-test-run-skill-before-exit-prefers-submit-command ()
+  "Submit before-exit skills through a backend's atomic submit function."
+  (let ((agent-backends nil)
+        (agent-before-exit-skill-name "session-retro")
+        events)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (agent-register-backend
+         'codex
+         (agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :submit-command (lambda (cmd &optional _buffer)
+                            (push (list 'submit cmd) events))
+          :send-command (lambda (cmd &optional _buffer)
+                          (push (list 'command cmd) events))
+          :send-return (lambda (&optional _buffer) (push 'return events))))
+        (should-not (agent-run-skill-before-exit 'codex buf))
+        (should (equal (nreverse events)
+                       '((submit "$session-retro"))))))))
 
 (ert-deftest agent-test-run-skill-before-exit-uses-claude-slash ()
   "Submit Claude skills with slash syntax."
@@ -263,6 +305,27 @@
         (should (agent-run-skill-before-exit 'codex buf))
         (should-not called)))))
 
+(ert-deftest agent-test-run-skill-before-exit-matches-expanded-directory ()
+  "Match sessions under configured directories that use `~'."
+  (let ((agent-backends nil)
+        (agent-before-exit-skill-name "session-retro")
+        (events nil))
+    (with-temp-buffer
+      (let* ((dir (expand-file-name "~/tmp/agent-before-exit-test/"))
+             (buf (current-buffer))
+             (agent-before-exit-skill-directories '("~/tmp/")))
+        (agent-register-backend
+         'codex
+         (agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) dir)
+          :send-command (lambda (cmd &optional _buffer)
+                          (push (list 'command cmd) events))
+          :send-return (lambda (&optional _buffer) (push 'return events))))
+        (should-not (agent-run-skill-before-exit 'codex buf))
+        (should (equal (nreverse events)
+                       '((command "$session-retro") return)))))))
+
 (ert-deftest agent-test-run-skill-before-exit-skips-unknown-backends ()
   "Do not abort exit when BACKEND has no skill command prefix."
   (let ((agent-backends nil)
@@ -280,6 +343,53 @@
           :send-command (lambda (&rest _args) (setq called t))))
         (should (agent-run-skill-before-exit 'other buf))
         (should-not called)))))
+
+(ert-deftest agent-test-exit-after-before-exit-skill-closes-pending-session ()
+  "Exit a session when its before-exit skill has finished."
+  (let ((agent-backends nil)
+        ran)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (setq-local agent--before-exit-skill-exit-pending t)
+        (agent-register-backend
+         'one
+         (agent-test--backend
+          :exit (lambda () (interactive) (setq ran t))))
+        (cl-letf (((symbol-function 'run-at-time)
+                   (lambda (_time _repeat function &rest args)
+                     (apply function args))))
+          (should (agent-exit-after-before-exit-skill 'one buf))
+          (should ran)
+          (should-not agent--before-exit-skill-exit-pending))))))
+
+(ert-deftest agent-test-exit-after-before-exit-skill-ignores-ordinary-ready ()
+  "Do not exit sessions without a pending before-exit skill."
+  (let ((agent-backends nil)
+        ran)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (agent-register-backend
+         'one
+         (agent-test--backend
+          :exit (lambda () (interactive) (setq ran t))))
+        (should-not (agent-exit-after-before-exit-skill 'one buf))
+        (should-not ran)))))
+
+(ert-deftest agent-test-exit-after-before-exit-skill-honors-backend-veto ()
+  "Do not close while a backend reports unaccepted prompt input."
+  (let ((agent-backends nil)
+        ran)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (setq-local agent--before-exit-skill-exit-pending t)
+        (agent-register-backend
+         'one
+         (agent-test--backend
+          :before-exit-ready-to-close-p (lambda (_buffer) nil)
+          :exit (lambda () (interactive) (setq ran t))))
+        (should-not (agent-exit-after-before-exit-skill 'one buf))
+        (should-not ran)
+        (should agent--before-exit-skill-exit-pending)))))
 
 (ert-deftest agent-test-discover-all-skills-skips-non-invocable ()
   "Do not expose skills marked `user-invocable: false'."
