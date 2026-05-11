@@ -51,7 +51,9 @@
 Each entry is (NAME . CODEX-HOME).  When non-nil,
 `ai-agent-codex-start-or-switch' uses the persisted account
 selection and sets `CODEX_HOME' accordingly so each account
-maintains its own credentials, config, sessions, and history.
+maintains its own credentials while sharing the standard Codex
+configuration, hooks, skills, sessions, and history from
+`~/.codex/'.
 
 Use `ai-agent-codex-select-account' to change the active account.
 The selection persists in `ai-agent-codex-account-file'.
@@ -149,6 +151,18 @@ read by `ai-agent-codex-account-env'.")
 Set by `ai-agent-codex--capture-buffer-account' via
 `codex-start-hook'.")
 
+(defconst ai-agent-codex--shared-config-items
+  '("config.toml" "hooks.json" "AGENTS.md" "rules"
+    "skills" "programmatic-skills" "plugins" "vendor_imports"
+    "history.jsonl" "sessions" "session_index.jsonl"
+    "archived_sessions" "memories" "shell_snapshots"
+    ".codex-global-state.json")
+  "Files and directories symlinked from `~/.codex/' into each account home.
+These items are shared across accounts so hooks, skills, project
+trust, memories, session history, and other user-facing Codex
+state remain available regardless of which account is active.
+Only account credentials such as `auth.json' remain account-local.")
+
 ;;;; Backend registration
 
 (defconst ai-agent-codex-icon-svg
@@ -196,6 +210,7 @@ back to the persisted active account via
   (when-let* ((account (or ai-agent-codex--pending-account
                            (ai-agent-codex--resolve-account)))
               (home (ai-agent-codex--account-home account)))
+    (ai-agent-codex--sync-account-home account)
     (list (format "CODEX_HOME=%s" home))))
 
 (defun ai-agent-codex--account-home (account)
@@ -209,6 +224,89 @@ back to the persisted active account via
   (if-let* ((home (and account (ai-agent-codex--account-home account))))
       (expand-file-name "config.toml" home)
     (expand-file-name codex-hooks-config-path)))
+
+(defun ai-agent-codex--sync-account-home (account)
+  "Sync shared Codex state into ACCOUNT's home directory."
+  (when-let* ((home (ai-agent-codex--account-home account)))
+    (make-directory home t)
+    (condition-case err
+        (ai-agent-codex--ensure-shared-symlinks home)
+      (error
+       (message "ai-agent-codex: failed to sync account home: %S" err)))))
+
+(defun ai-agent-codex--ensure-shared-symlinks (home)
+  "Ensure shared config symlinks exist in account HOME."
+  (let ((canonical-home (expand-file-name ".codex/" "~")))
+    (dolist (item ai-agent-codex--shared-config-items)
+      (ai-agent-codex--ensure-shared-symlink
+       (expand-file-name item canonical-home)
+       (expand-file-name item home)))))
+
+(defun ai-agent-codex--ensure-shared-symlink (source target)
+  "Ensure TARGET is a symlink pointing to SOURCE.
+Create the symlink if TARGET is missing, replace TARGET if it is a
+virgin-state file or empty directory, and back up TARGET before
+replacing it if it has real content."
+  (when (file-exists-p source)
+    (cond
+     ((file-symlink-p target)
+      (unless (equal (file-truename target) (file-truename source))
+        (ai-agent-codex--backup-item target)
+        (make-symbolic-link source target)
+        (message "ai-agent-codex: replaced %s with symlink to %s"
+                 target source)))
+     ((not (file-exists-p target))
+      (make-symbolic-link source target)
+      (message "ai-agent-codex: symlinked %s -> %s" target source))
+     ((ai-agent-codex--item-virgin-p target)
+      (ai-agent-codex--delete-item target)
+      (make-symbolic-link source target)
+      (message "ai-agent-codex: replaced virgin %s with symlink to %s"
+               target source))
+     (t
+      (ai-agent-codex--backup-item target)
+      (make-symbolic-link source target)
+      (message "ai-agent-codex: backed up and symlinked %s -> %s"
+               target source)))))
+
+(defun ai-agent-codex--item-virgin-p (path)
+  "Return non-nil if PATH is a virgin-state file or empty directory.
+An empty directory is virgin.  A zero-byte file is virgin.  A small
+JSON file containing only `{}' or `[]' is virgin."
+  (cond
+   ((file-directory-p path)
+    (null (directory-files path nil directory-files-no-dot-files-regexp)))
+   ((file-regular-p path)
+    (ai-agent-codex--file-virgin-p path))))
+
+(defun ai-agent-codex--file-virgin-p (path)
+  "Return non-nil if regular file PATH has empty or placeholder content."
+  (let ((size (file-attribute-size (file-attributes path))))
+    (or (zerop size)
+        (and (< size 16)
+             (member (string-trim
+                      (with-temp-buffer
+                        (insert-file-contents path)
+                        (buffer-string)))
+                     '("" "{}" "[]"))))))
+
+(defun ai-agent-codex--delete-item (path)
+  "Delete PATH, whether it is a file or a directory."
+  (if (file-directory-p path)
+      (delete-directory path t)
+    (delete-file path)))
+
+(defun ai-agent-codex--backup-item (path)
+  "Move PATH to a timestamped backup path."
+  (let* ((timestamp (format-time-string "%Y%m%d%H%M%S"))
+         (backup (format "%s.ai-agent-backup-%s" path timestamp))
+         (candidate backup)
+         (counter 0))
+    (while (file-exists-p candidate)
+      (setq counter (1+ counter)
+            candidate (format "%s.%d" backup counter)))
+    (rename-file path candidate)
+    (message "ai-agent-codex: backed up %s to %s" path candidate)))
 
 (defun ai-agent-codex--load-account ()
   "Load the current account from `ai-agent-codex-account-file'.
@@ -349,9 +447,11 @@ config file changed."
 When THEME is nil, use the current Emacs AI theme.  Only writes
 the file when the theme value actually changes."
   (let* ((theme (or theme (ai-agent--theme)))
-         (config-file (ai-agent-codex--config-file
-                       (or ai-agent-codex--pending-account
-                           ai-agent-codex--buffer-account)))
+         (account (or ai-agent-codex--pending-account
+                      ai-agent-codex--buffer-account))
+         (_ (when account
+              (ai-agent-codex--sync-account-home account)))
+         (config-file (ai-agent-codex--config-file account))
          (new-line (format "theme = \"%s\"" theme)))
     (make-directory (file-name-directory config-file) t)
     (with-temp-buffer

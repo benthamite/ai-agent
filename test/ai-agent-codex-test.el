@@ -14,11 +14,72 @@
   "Set CODEX_HOME from the dynamically bound pending account."
   (let* ((dir (make-temp-file "codex-account" t))
          (home (expand-file-name "work" dir))
+         (canonical (expand-file-name ".codex" dir))
+         (process-environment (cons (format "HOME=%s" dir)
+                                    process-environment))
          (ai-agent-codex-accounts `(("work" . ,home)))
          (ai-agent-codex--pending-account "work"))
     (unwind-protect
-        (should (equal (ai-agent-codex-account-env "*codex*" dir)
-                       (list (format "CODEX_HOME=%s" home))))
+        (progn
+          (make-directory canonical t)
+          (with-temp-file (expand-file-name "config.toml" canonical)
+            (insert "model = \"gpt-5.5\"\n"))
+          (should (equal (ai-agent-codex-account-env "*codex*" dir)
+                         (list (format "CODEX_HOME=%s" home)))))
+      (delete-directory dir t))))
+
+(ert-deftest ai-agent-codex-test-account-env-symlinks-shared-state ()
+  "Share hooks, skills, and history from the canonical Codex home."
+  (let* ((dir (make-temp-file "codex-account" t))
+         (home (expand-file-name "work" dir))
+         (canonical (expand-file-name ".codex" dir))
+         (process-environment (cons (format "HOME=%s" dir)
+                                    process-environment))
+         (ai-agent-codex-accounts `(("work" . ,home)))
+         (ai-agent-codex--pending-account "work"))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "skills" canonical) t)
+          (with-temp-file (expand-file-name "hooks.json" canonical)
+            (insert "{}\n"))
+          (with-temp-file (expand-file-name "history.jsonl" canonical)
+            (insert "{\"text\":\"old chat\"}\n"))
+          (ai-agent-codex-account-env "*codex*" dir)
+          (dolist (item '("hooks.json" "history.jsonl" "skills"))
+            (let ((target (expand-file-name item home))
+                  (source (expand-file-name item canonical)))
+              (should (file-symlink-p target))
+              (should (equal (file-truename target)
+                             (file-truename source))))))
+      (delete-directory dir t))))
+
+(ert-deftest ai-agent-codex-test-account-env-backs-up-conflicting-state ()
+  "Back up account-local shared state before linking canonical state."
+  (let* ((dir (make-temp-file "codex-account" t))
+         (home (expand-file-name "work" dir))
+         (canonical (expand-file-name ".codex" dir))
+         (process-environment (cons (format "HOME=%s" dir)
+                                    process-environment))
+         (ai-agent-codex-accounts `(("work" . ,home)))
+         (ai-agent-codex--pending-account "work"))
+    (unwind-protect
+        (progn
+          (make-directory home t)
+          (make-directory canonical t)
+          (with-temp-file (expand-file-name "history.jsonl" canonical)
+            (insert "{\"text\":\"canonical\"}\n"))
+          (with-temp-file (expand-file-name "history.jsonl" home)
+            (insert "{\"text\":\"account-local\"}\n"))
+          (ai-agent-codex-account-env "*codex*" dir)
+          (let ((target (expand-file-name "history.jsonl" home))
+                (backups (file-expand-wildcards
+                          (expand-file-name
+                           "history.jsonl.ai-agent-backup-*" home))))
+            (should (file-symlink-p target))
+            (should (equal (length backups) 1))
+            (with-temp-buffer
+              (insert-file-contents (car backups))
+              (should (string-match-p "account-local" (buffer-string))))))
       (delete-directory dir t))))
 
 (ert-deftest ai-agent-codex-test-load-account-ignores-stale-selection ()
@@ -139,15 +200,20 @@
   "Persist theme changes to the pending account's Codex config."
   (let* ((dir (make-temp-file "codex-theme" t))
          (home (expand-file-name "work" dir))
+         (canonical (expand-file-name ".codex" dir))
          (config (expand-file-name "config.toml" home))
+         (canonical-config (expand-file-name "config.toml" canonical))
+         (process-environment (cons (format "HOME=%s" dir)
+                                    process-environment))
          (ai-agent-codex-accounts `(("work" . ,home)))
          (ai-agent-codex--pending-account "work"))
     (unwind-protect
         (progn
-          (make-directory home t)
-          (with-temp-file config
+          (make-directory canonical t)
+          (with-temp-file canonical-config
             (insert "[tui]\ntheme = \"light\"\n"))
           (should (ai-agent-codex--sync-theme "dark"))
+          (should (file-symlink-p config))
           (should (string-match-p
                    "^\\[tui\\]\ntheme = \"dark\""
                    (with-temp-buffer
