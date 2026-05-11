@@ -1117,7 +1117,7 @@ entries in `ai-agent-menu'."
     '("F" "codex fork" ai-agent-codex-fork))
   (transient-append-suffix 'ai-agent-menu
     (ai-agent-codex--account-menu-location)
-    '("-C" ai-agent-codex--infix-account)))
+    '("-x" ai-agent-codex--infix-account)))
 
 (with-eval-after-load 'ai-agent
   (ai-agent-codex--append-menu-suffixes))

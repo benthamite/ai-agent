@@ -3023,8 +3023,8 @@ Signals an error if the status file is missing or incomplete."
     '("P" "stop status polling" ai-agent-claude-stop-status-polling))
   ;; Options: after "protect buffers"
   (transient-append-suffix 'ai-agent-menu "-p"
-    '("-a" ai-agent-claude--infix-account))
-  (transient-append-suffix 'ai-agent-menu "-a"
+    '("-c" ai-agent-claude--infix-account))
+  (transient-append-suffix 'ai-agent-menu "-c"
     '("-w" ai-agent-claude--infix-warn-kill-with-branches)))
 
 (with-eval-after-load 'ai-agent
