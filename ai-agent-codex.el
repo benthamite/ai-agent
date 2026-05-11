@@ -167,8 +167,6 @@ Source: SVG Repo (CC0).")
         :start #'codex--start
         :start-new #'ai-agent-codex--start-with-account
         :program "codex"
-        :send-return (lambda (&optional _buf)
-                       (codex--term-send-return codex-terminal-backend))
         :icon (lambda (&optional face) (let ((svg (ai-agent-svg-icon ai-agent-codex-icon-svg face)))
                                         (if (string-empty-p svg) "CX" svg)))
         :account (lambda (buf)
