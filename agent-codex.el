@@ -181,6 +181,9 @@ Source: SVG Repo (CC0).")
         :send-return #'agent-codex-send-return
         :submit-command #'agent-codex-submit-command
         :before-exit-ready-to-close-p #'agent-codex-before-exit-ready-to-close-p
+        :duration-ms (lambda (buf)
+                       (with-current-buffer buf
+                         (agent-codex-status-duration-ms)))
         :start #'codex--start
         :start-new #'agent-codex--start-with-account
         :program "codex"

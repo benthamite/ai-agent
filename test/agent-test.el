@@ -305,6 +305,45 @@
         (should (agent-run-skill-before-exit 'codex buf))
         (should-not called)))))
 
+(ert-deftest agent-test-run-skill-before-exit-skips-short-sessions ()
+  "Do not submit before-exit skills before the minimum duration."
+  (let ((agent-backends nil)
+        (agent-before-exit-skill-name "session-retro")
+        (agent-before-exit-skill-directories nil)
+        (agent-before-exit-skill-min-duration-seconds 60)
+        called)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (agent-register-backend
+         'codex
+         (agent-test--backend
+          :duration-ms (lambda (_buffer) 30000)
+          :send-command (lambda (&rest _args) (setq called t))))
+        (should (agent-run-skill-before-exit 'codex buf))
+        (should-not called)
+        (should-not agent--before-exit-skill-sent)
+        (should-not agent--before-exit-skill-exit-pending)))))
+
+(ert-deftest agent-test-run-skill-before-exit-allows-long-sessions ()
+  "Submit before-exit skills after the minimum duration."
+  (let ((agent-backends nil)
+        (agent-before-exit-skill-name "session-retro")
+        (agent-before-exit-skill-directories nil)
+        (agent-before-exit-skill-min-duration-seconds 60)
+        events)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (agent-register-backend
+         'codex
+         (agent-test--backend
+          :duration-ms (lambda (_buffer) 60000)
+          :send-command (lambda (cmd &optional _buffer)
+                          (push (list 'command cmd) events))
+          :send-return (lambda (&optional _buffer) (push 'return events))))
+        (should-not (agent-run-skill-before-exit 'codex buf))
+        (should (equal (nreverse events)
+                       '((command "$session-retro") return)))))))
+
 (ert-deftest agent-test-run-skill-before-exit-matches-expanded-directory ()
   "Match sessions under configured directories that use `~'."
   (let ((agent-backends nil)

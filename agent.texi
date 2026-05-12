@@ -216,7 +216,9 @@ and Codex sessions receive dollar-prefixed skill commands, then submits the
 command. When the backend reports that the skill run has finished, the
 session exits automatically; ordinary ready notifications are left unchanged.
 Leave @code{agent-before-exit-skill-directories} nil to run the skill before
-exiting every session.
+exiting every session. @code{agent-before-exit-skill-min-duration-seconds} defaults
+to 60 seconds, so very short sessions skip the before-exit skill when the
+backend can report elapsed session time.
 
 Backends can veto that automatic close while the submitted skill invocation is
 still visible as unaccepted prompt input. Codex uses this to avoid closing a

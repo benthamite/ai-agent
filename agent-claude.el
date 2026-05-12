@@ -247,6 +247,9 @@ Source: lobehub/lobe-icons (MIT).")
         :account (lambda (buf)
                    (buffer-local-value 'agent-claude--buffer-account buf))
         :has-background-tasks-p #'agent-claude--has-background-tasks-p
+        :duration-ms (lambda (buf)
+                       (with-current-buffer buf
+                         (agent-claude-status-duration-ms)))
         :display-name-suffix #'agent-claude--branch-suffix
         :label "Claude Code"
         :discover-skills #'agent-claude--discover-skills

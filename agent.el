@@ -61,6 +61,14 @@ When nil, run the configured skill before exiting every session."
   :type '(repeat directory)
   :group 'agent)
 
+(defcustom agent-before-exit-skill-min-duration-seconds 60
+  "Minimum session duration before running the before-exit skill.
+Set to nil or 0 to run `agent-before-exit-skill-name' regardless
+of session duration.  Backends that cannot report a duration are
+treated as eligible."
+  :type '(choice (const :tag "Disabled" nil) number)
+  :group 'agent)
+
 (defcustom agent-skill-command-prefix-alist
   '((claude-code . "/")
     (codex . "$"))
@@ -105,6 +113,8 @@ Optional session metadata:
   :has-background-tasks-p function (buffer) -> bool
                            (non-nil if the session has ongoing
                            background work while idle for input)
+  :duration-ms           function (buffer) -> integer or nil
+                           (elapsed session duration in milliseconds)
 
 Optional command keys for dispatching shared commands:
   :discover-skills       function () -> list of skill plists
@@ -927,7 +937,8 @@ skill command was submitted and exit should be delayed."
   (with-current-buffer buffer
     (if (or agent--before-exit-skill-sent
             (not (agent--before-exit-skill-configured-p))
-            (not (agent--before-exit-skill-directory-p backend buffer)))
+            (not (agent--before-exit-skill-directory-p backend buffer))
+            (not (agent--before-exit-skill-duration-p backend buffer)))
         t
       (let ((command (agent--before-exit-skill-command backend))
             (submit-command-fn (agent--backend-get backend :submit-command))
@@ -983,6 +994,18 @@ unaccepted at the prompt."
         (cl-some (lambda (candidate)
                    (file-in-directory-p directory (file-truename candidate)))
                  agent-before-exit-skill-directories))))
+
+(defun agent--before-exit-skill-duration-p (backend buffer)
+  "Return non-nil if BACKEND session BUFFER is old enough."
+  (let* ((duration-ms-fn (agent--backend-get backend :duration-ms))
+         (duration-ms (when duration-ms-fn
+                        (funcall duration-ms-fn buffer))))
+    (or (not agent-before-exit-skill-min-duration-seconds)
+        (<= agent-before-exit-skill-min-duration-seconds 0)
+        (not duration-ms-fn)
+        (not duration-ms)
+        (>= duration-ms (* agent-before-exit-skill-min-duration-seconds
+                           1000)))))
 
 (defun agent--buffer-directory (backend buffer)
   "Return the normalized directory for BACKEND session BUFFER."
