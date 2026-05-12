@@ -224,9 +224,9 @@ session when the dollar-prefixed skill name was inserted but not submitted,
 while ignoring Codex's visible placeholder and autosuggestion text.
 
 Backends can provide an atomic submit operation for before-exit commands.
-Codex delegates this to @samp{codex.el}'s target-buffer submit helper so the skill
-command is inserted and submitted before the terminal buffer is displayed
-again.
+Claude and Codex both target the resolved session buffer directly, insert the
+skill command, and submit it once before the terminal buffer is displayed
+again. Codex delegates this to @samp{codex.el}'s target-buffer submit helper.
 
 @node Claude Code commands
 @section Claude Code commands
@@ -241,6 +241,9 @@ again.
 @findex agent-claude-debug-backtrace
 @findex agent-claude-handoff
 @findex agent-claude-restart
+@findex agent-claude-send-command
+@findex agent-claude-send-return
+@findex agent-claude-submit-command
 @findex agent-claude-switch-branch
 @findex agent-claude-create-branch
 @findex agent-claude-ensure-statusline-config

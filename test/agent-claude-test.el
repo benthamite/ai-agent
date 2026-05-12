@@ -8,6 +8,29 @@
 (require 'json)
 (require 'agent-claude)
 
+;;;; Prompt submission
+
+(ert-deftest agent-claude-test-submit-command-targets-explicit-buffer ()
+  "Submit commands to the explicit Claude buffer without prompting."
+  (let (events)
+    (with-temp-buffer
+      (let ((buf (current-buffer))
+            (claude-code-terminal-backend 'eat))
+        (cl-letf (((symbol-function 'claude-code--buffer-p)
+                   (lambda (candidate) (eq candidate buf)))
+                  ((symbol-function 'claude-code--get-or-prompt-for-buffer)
+                   (lambda () (error "Should not prompt for a buffer")))
+                  ((symbol-function 'claude-code--term-send-string)
+                   (lambda (_backend string)
+                     (push (list (current-buffer) string) events)))
+                  ((symbol-function 'display-buffer) #'ignore)
+                  ((symbol-function 'sit-for) #'ignore))
+          (should (eq (agent-claude-submit-command "/session-retro" buf)
+                      buf))
+          (should (equal (nreverse events)
+                         (list (list buf "/session-retro")
+                               (list buf (kbd "RET"))))))))))
+
 ;;;; Session name extraction
 
 (ert-deftest agent-claude-test-session-name-standard ()

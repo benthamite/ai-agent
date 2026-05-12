@@ -206,7 +206,8 @@ Used to detect when `/branch' creates a new session.")
 (defvar url-request-method)
 (defvar url-request-extra-headers)
 (declare-function agent-svg-icon "agent" (svg-data &optional face))
-(declare-function claude-code--term-send-return "claude-code" (backend))
+(declare-function claude-code--get-or-prompt-for-buffer "claude-code" ())
+(declare-function claude-code--term-send-string "claude-code" (backend string))
 (declare-function json-pretty-print-buffer "json" ())
 (declare-function org-back-to-heading "org" (&optional invisible-ok))
 (declare-function org-map-entries "org" (func &optional match scope &rest skip))
@@ -235,12 +236,12 @@ Source: lobehub/lobe-icons (MIT).")
         :directory (lambda (buf) (with-current-buffer buf (claude-code--directory)))
         :extract-directory #'claude-code--extract-directory-from-buffer-name
         :extract-instance-name #'claude-code--extract-instance-name-from-buffer-name
-        :send-command (lambda (cmd &optional _buf) (claude-code--do-send-command cmd))
+        :send-command #'agent-claude-send-command
+        :submit-command #'agent-claude-submit-command
         :start #'claude-code--start
         :start-new #'agent-claude--start-with-account
         :program "claude"
-        :send-return (lambda (&optional _buf)
-                       (claude-code--term-send-return claude-code-terminal-backend))
+        :send-return #'agent-claude-send-return
         :icon (lambda (&optional face) (let ((svg (agent-svg-icon agent-claude-icon-svg face)))
                                         (if (string-empty-p svg) "CC" svg)))
         :account (lambda (buf)
@@ -261,6 +262,39 @@ Source: lobehub/lobe-icons (MIT).")
 ;;;; Functions
 
 ;;;;; Exit
+
+(defun agent-claude-send-command (cmd &optional buffer)
+  "Insert CMD into BUFFER's Claude Code prompt without submitting it."
+  (when-let* ((claude-buffer (agent-claude--target-buffer buffer)))
+    (with-current-buffer claude-buffer
+      (claude-code--term-send-string claude-code-terminal-backend cmd)
+      (display-buffer claude-buffer))
+    claude-buffer))
+
+(defun agent-claude-send-return (&optional buffer)
+  "Submit the active prompt in BUFFER's Claude Code session."
+  (when-let* ((claude-buffer (agent-claude--target-buffer buffer)))
+    (with-current-buffer claude-buffer
+      (sit-for 0.1)
+      (claude-code--term-send-string claude-code-terminal-backend (kbd "RET"))
+      (display-buffer claude-buffer))
+    claude-buffer))
+
+(defun agent-claude-submit-command (cmd &optional buffer)
+  "Insert CMD into BUFFER's Claude Code prompt and submit it atomically."
+  (when-let* ((claude-buffer (agent-claude-send-command cmd buffer)))
+    (agent-claude-send-return claude-buffer)))
+
+(defun agent-claude--target-buffer (buffer)
+  "Return the Claude Code target BUFFER, current buffer, or prompted buffer."
+  (cond
+   ((and (buffer-live-p buffer)
+         (claude-code--buffer-p buffer))
+    buffer)
+   ((claude-code--buffer-p (current-buffer))
+    (current-buffer))
+   (t
+    (claude-code--get-or-prompt-for-buffer))))
 
 ;;;###autoload
 (defun agent-claude-exit ()
