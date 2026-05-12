@@ -128,6 +128,42 @@
         (agent-codex-restart)))
     (should (equal captured-account "work"))))
 
+(ert-deftest agent-codex-test-handoff-kills-single-existing-buffer-when-source-missing ()
+  "Avoid instance-name prompts when emacsclient did not pass a source buffer."
+  (let* ((dir (file-name-as-directory (make-temp-file "codex-handoff" t)))
+         (handoff-file (expand-file-name "handoff.md" dir))
+         (existing (generate-new-buffer "*codex:handoff*"))
+         killed started)
+    (unwind-protect
+        (progn
+          (with-temp-file handoff-file
+            (insert "continue\n"))
+          (with-current-buffer existing
+            (setq default-directory dir))
+          (let ((agent-codex-handoff-file handoff-file))
+            (cl-letf (((symbol-function 'agent-codex--handoff-source-buffer)
+                       (lambda (_buffer-name) nil))
+                      ((symbol-function 'agent-codex--handoff-directory)
+                       (lambda (_source-buffer) dir))
+                      ((symbol-function 'agent-codex--resolve-account)
+                       (lambda () nil))
+                      ((symbol-function 'agent-codex--install-hooks)
+                       #'ignore)
+                      ((symbol-function 'codex--find-codex-buffers-for-directory)
+                       (lambda (_dir) (list existing)))
+                      ((symbol-function 'codex--buffer-instance-name-for)
+                       (lambda (_buffer) "default"))
+                      ((symbol-function 'agent--force-kill-buffer)
+                       (lambda (buffer) (push buffer killed)))
+                      ((symbol-function 'codex--start)
+                       (lambda (&rest _args) (setq started t))))
+              (agent-codex-handoff)
+              (should (equal killed (list existing)))
+              (should started))))
+      (when (buffer-live-p existing)
+        (kill-buffer existing))
+      (delete-directory dir t))))
+
 (ert-deftest agent-codex-test-start-with-account-installs-start-hook ()
   "Install Codex start hooks before launching sessions."
   (let ((codex-start-hook nil)

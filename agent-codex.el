@@ -1016,15 +1016,39 @@ via `codex exec'."
          (dir (agent-codex--handoff-directory source-buffer)))
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty"))
-    (when source-buffer
-      (with-current-buffer source-buffer
-        (setq-local agent-before-exit-skill-inhibit t))
-      (agent--force-kill-buffer source-buffer))
+    (agent-codex--kill-handoff-source source-buffer dir)
     (let ((agent-codex--pending-account
            (or account (agent-codex--resolve-account))))
       (agent-codex--install-hooks)
       (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
         (codex--start nil (list prompt) nil t)))))
+
+(defun agent-codex--kill-handoff-source (source-buffer dir)
+  "Kill SOURCE-BUFFER, or the single existing Codex buffer in DIR.
+The fallback handles emacsclient invocations that reach Emacs
+without the requesting buffer name.  Handoff replaces the current
+session, so leaving that buffer alive would make `codex--start'
+prompt for a new instance name and break unattended loops."
+  (let ((target (or source-buffer
+                    (agent-codex--single-existing-buffer-for-handoff dir))))
+    (when target
+      (with-current-buffer target
+        (setq-local agent-before-exit-skill-inhibit t))
+      (agent--force-kill-buffer target))))
+
+(defun agent-codex--single-existing-buffer-for-handoff (dir)
+  "Return the only existing Codex buffer for DIR, or signal on ambiguity."
+  (let ((buffers (codex--find-codex-buffers-for-directory dir)))
+    (pcase buffers
+      ('nil nil)
+      (`(,buffer) buffer)
+      (_ (user-error
+          "Multiple Codex sessions already exist for %s: %s"
+          (abbreviate-file-name dir)
+          (mapconcat (lambda (buffer)
+                       (or (codex--buffer-instance-name-for buffer)
+                           "default"))
+                     buffers ", "))))))
 
 (defun agent-codex-handoff-from-emacsclient ()
   "Run `agent-codex-handoff' for the client-provided buffer name.
