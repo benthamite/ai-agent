@@ -174,7 +174,8 @@ backend can report elapsed session time.
 Backends can veto that automatic close while the submitted skill invocation is
 still visible as unaccepted prompt input. Codex uses this to avoid closing a
 session when the dollar-prefixed skill name was inserted but not submitted,
-while ignoring Codex's visible placeholder and autosuggestion text.
+while ignoring submitted command scrollback, visible placeholder text, and
+autosuggestion text.
 
 Backends can provide an atomic submit operation for before-exit commands.
 Claude and Codex both target the resolved session buffer directly, insert the

@@ -128,6 +128,27 @@
         (agent-codex-restart)))
     (should (equal captured-account "work"))))
 
+(ert-deftest agent-codex-test-start-with-account-installs-start-hook ()
+  "Install Codex start hooks before launching sessions."
+  (let ((codex-start-hook nil)
+        (agent-codex-accounts '(("work" . "/tmp/codex-work"))))
+    (cl-letf (((symbol-function 'agent-codex--resolve-account)
+               (lambda () "work"))
+              ((symbol-function 'codex)
+               (lambda ()
+                 (should (memq #'agent-codex--record-start-time
+                               codex-start-hook)))))
+      (agent-codex--start-with-account))))
+
+(ert-deftest agent-codex-test-record-start-time-sets-duration ()
+  "Record a start time for Codex buffers."
+  (let ((buf (generate-new-buffer "*codex:/tmp/project/*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (agent-codex--record-start-time)
+          (should (integerp (agent-codex-status-duration-ms))))
+      (kill-buffer buf))))
+
 (ert-deftest agent-codex-test-send-command-and-return-are-separate ()
   "Insert Codex command text separately from submitting it."
   (let (events)
@@ -179,6 +200,17 @@
           (should (agent-codex-before-exit-ready-to-close-p buf)))
       (kill-buffer buf))))
 
+(ert-deftest agent-codex-test-before-exit-ready-ignores-submitted-command ()
+  "Allow auto-close when the skill command is scrollback, not prompt input."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'codex--terminal-cursor-position)
+                   (lambda () (point-max))))
+          (with-current-buffer buf
+            (insert "› $session-learning-capture\n\n  gpt-5.5 medium · /tmp")
+            (should (agent-codex-before-exit-ready-to-close-p buf))))
+      (kill-buffer buf))))
+
 (ert-deftest agent-codex-test-before-exit-ready-ignores-autosuggestion ()
   "Allow auto-close when Codex shows placeholder prompt text."
   (let ((buf (generate-new-buffer "*codex-test*")))
@@ -190,6 +222,29 @@
             (insert "› Summarize recent commits\n\n  gpt-5.5 medium · /tmp")
             (should (agent-codex-before-exit-ready-to-close-p buf))))
       (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-stop-closes-after-submitted-before-exit-skill ()
+  "Close a pending before-exit session when the submitted skill finishes."
+  (let ((buf (generate-new-buffer "*codex:/tmp/project/*"))
+        ran)
+    (unwind-protect
+        (cl-letf (((symbol-function 'codex--terminal-cursor-position)
+                   (lambda () (point-max)))
+                  ((symbol-function 'run-at-time)
+                   (lambda (_time _repeat function &rest args)
+                     (apply function args)))
+                  ((symbol-function 'agent-codex-exit)
+                   (lambda () (interactive) (setq ran t))))
+          (with-current-buffer buf
+            (setq-local agent--before-exit-skill-exit-pending t)
+            (insert "› $session-learning-capture\n\n  gpt-5.5 medium · /tmp"))
+          (agent-codex--handle-notification
+           (list :type "Stop" :buffer-name (buffer-name buf)))
+          (should ran)
+          (with-current-buffer buf
+            (should-not agent--before-exit-skill-exit-pending)))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
 
 ;;;; Theme sync
 

@@ -134,6 +134,7 @@ When nil, use `codex-sandbox-mode' or the CLI default."
 (defvar gptel-use-tools)
 (defvar gptel--known-backends)
 (declare-function agent-svg-icon "agent" (svg-data &optional face))
+(declare-function codex--terminal-cursor-position "codex" ())
 (declare-function gptel-request "gptel")
 
 (defvar agent-codex--current-account nil
@@ -234,14 +235,38 @@ Source: SVG Repo (CC0).")
 
 (defun agent-codex--current-prompt-input ()
   "Return the current Codex prompt input, or nil when empty."
+  (if (codex--terminal-cursor-position)
+      (agent-codex--prompt-input-at-cursor)
+    (agent-codex--last-prompt-input)))
+
+(defun agent-codex--prompt-input-at-cursor ()
+  "Return Codex prompt input at the terminal cursor, or nil."
+  (when-let* ((cursor (codex--terminal-cursor-position)))
+    (save-excursion
+      (goto-char cursor)
+      (agent-codex--prompt-input-on-current-line))))
+
+(defun agent-codex--last-prompt-input ()
+  "Return input from the last visible Codex prompt line, or nil."
   (save-excursion
     (goto-char (point-max))
-    (if (re-search-backward "^›[ \t]*\\([^\n]*\\)$" nil t)
-        (let ((input (string-trim (match-string-no-properties 1))))
-          (unless (or (string-empty-p input)
-                      (agent-codex--prompt-autosuggestion-p input))
-            input))
-      nil)))
+    (when (re-search-backward "^›[ \t]*\\([^\n]*\\)$" nil t)
+      (agent-codex--nonempty-prompt-input (match-string-no-properties 1)))))
+
+(defun agent-codex--prompt-input-on-current-line ()
+  "Return Codex prompt input on the current line, or nil."
+  (let ((line-end (line-end-position)))
+    (beginning-of-line)
+    (when (looking-at "^[ \t]*›[ \t]*\\([^\n]*\\)$")
+      (agent-codex--nonempty-prompt-input
+       (buffer-substring-no-properties (match-beginning 1) line-end)))))
+
+(defun agent-codex--nonempty-prompt-input (input)
+  "Return sanitized INPUT when it is meaningful prompt input."
+  (let ((trimmed (string-trim input)))
+    (unless (or (string-empty-p trimmed)
+                (agent-codex--prompt-autosuggestion-p trimmed))
+      trimmed)))
 
 (defun agent-codex--prompt-autosuggestion-p (input)
   "Return non-nil when INPUT is Codex placeholder text."
@@ -420,6 +445,7 @@ persists the selection.  New sessions will use this account."
 (defun agent-codex--start-with-account ()
   "Start a new Codex session using the active account."
   (interactive)
+  (agent-codex--install-hooks)
   (let* ((account (agent-codex--resolve-account))
          (agent-codex--pending-account account))
     (codex)))
@@ -472,12 +498,15 @@ segment does not perform disk I/O on every redisplay."
         model)))))
 
 (defun agent-codex-set-modeline ()
-  "Set the doom-modeline to the `ai-session' modeline for this buffer.
-Also records the session start time."
+  "Set the doom-modeline to the `ai-session' modeline for this buffer."
   (when (codex--buffer-p (current-buffer))
-    (setq agent-codex--start-time (current-time))
     (when (require 'doom-modeline-core nil t)
       (doom-modeline-set-modeline 'ai-session))))
+
+(defun agent-codex--record-start-time ()
+  "Record the current Codex session start time."
+  (when (codex--buffer-p (current-buffer))
+    (setq agent-codex--start-time (current-time))))
 
 (defun agent-codex-status-model ()
   "Return the model name for the current Codex session."
@@ -920,6 +949,7 @@ via `codex exec'."
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
     (message "Starting Codex for `%s' in %s..." package dir)
+    (agent-codex--install-hooks)
     (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
       (codex--start nil (list prompt) nil t))))
 
@@ -946,6 +976,7 @@ via `codex exec'."
       (agent--force-kill-buffer source-buffer))
     (let ((agent-codex--pending-account
            (or account (agent-codex--resolve-account))))
+      (agent-codex--install-hooks)
       (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
         (codex--start nil (list prompt) nil t)))))
 
@@ -997,6 +1028,7 @@ the most recently updated one for that directory."
     (agent--force-kill-buffer (current-buffer))
     (let ((agent-codex--pending-account
            (or account (agent-codex--resolve-account))))
+      (agent-codex--install-hooks)
       (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
         (codex--start-subcommand "resume" t nil instance-name)))))
 
@@ -1020,6 +1052,7 @@ unified session switcher."
   "Resume a previous Codex session.
 With prefix ARG, use Codex CLI's `--last' flag."
   (interactive "P")
+  (agent-codex--install-hooks)
   (codex-resume arg))
 
 ;;;###autoload
@@ -1027,27 +1060,35 @@ With prefix ARG, use Codex CLI's `--last' flag."
   "Fork a previous Codex session.
 With prefix ARG, use Codex CLI's `--last' flag."
   (interactive "P")
+  (agent-codex--install-hooks)
   (codex-fork arg))
 
 ;;;; Hooks
 
-(add-hook 'codex-event-hook #'agent-codex--handle-notification)
-(add-hook 'kill-buffer-query-functions #'agent-protect-buffer)
-(add-hook 'codex-start-hook #'agent--assign-session-key)
-(add-hook 'codex-start-hook #'agent--refresh-display-names)
-(add-hook 'codex-start-hook #'agent-disable-scrollback-truncation)
-(add-hook 'codex-start-hook #'agent-setup-snippet-keys)
-(add-hook 'codex-start-hook #'agent-fix-rendering)
-(add-hook 'codex-start-hook #'agent-codex--capture-buffer-account)
-(add-hook 'codex-start-hook #'agent-codex-set-modeline)
-(add-hook 'codex-process-environment-functions
-          #'agent-codex-account-env)
-(add-hook 'codex-process-environment-functions
-          #'agent-codex--sync-theme-before-start)
-(add-hook 'kill-buffer-hook #'agent--release-session-key)
-(add-hook 'kill-buffer-hook #'agent--refresh-display-names-deferred)
-(advice-add 'codex--do-send-command :before
-            #'agent--clear-waiting-for-input)
+(defun agent-codex--install-hooks ()
+  "Install Agent hooks for Codex integration."
+  (add-hook 'codex-event-hook #'agent-codex--handle-notification)
+  (add-hook 'kill-buffer-query-functions #'agent-protect-buffer)
+  (add-hook 'codex-start-hook #'agent--assign-session-key)
+  (add-hook 'codex-start-hook #'agent--refresh-display-names)
+  (add-hook 'codex-start-hook #'agent-disable-scrollback-truncation)
+  (add-hook 'codex-start-hook #'agent-setup-snippet-keys)
+  (add-hook 'codex-start-hook #'agent-fix-rendering)
+  (add-hook 'codex-start-hook #'agent-codex--capture-buffer-account)
+  (add-hook 'codex-start-hook #'agent-codex--record-start-time)
+  (add-hook 'codex-start-hook #'agent-codex-set-modeline)
+  (add-hook 'codex-process-environment-functions
+            #'agent-codex-account-env)
+  (add-hook 'codex-process-environment-functions
+            #'agent-codex--sync-theme-before-start)
+  (add-hook 'kill-buffer-hook #'agent--release-session-key)
+  (add-hook 'kill-buffer-hook #'agent--refresh-display-names-deferred)
+  (unless (advice-member-p #'agent--clear-waiting-for-input
+                           'codex--do-send-command)
+    (advice-add 'codex--do-send-command :before
+                #'agent--clear-waiting-for-input)))
+
+(agent-codex--install-hooks)
 
 ;;;;; Exit and kill on exit
 
