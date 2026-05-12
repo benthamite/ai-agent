@@ -82,6 +82,11 @@ treated as eligible."
 (defvar-local agent--before-exit-skill-exit-pending nil
   "Non-nil when BUFFER should exit after its before-exit skill finishes.")
 
+(defvar-local agent-before-exit-skill-inhibit nil
+  "Non-nil means skip the configured before-exit skill in this buffer.
+This is useful for orchestration sessions that must close immediately,
+such as handoff-driven autoloops.")
+
 ;;;; Backend registry
 
 (defvar agent-backends nil
@@ -949,6 +954,7 @@ BACKEND is the resolved `agent' backend.  Return nil when a
 skill command was submitted and exit should be delayed."
   (with-current-buffer buffer
     (if (or agent--before-exit-skill-sent
+            agent-before-exit-skill-inhibit
             (not (agent--before-exit-skill-configured-p))
             (not (agent--before-exit-skill-directory-p backend buffer))
             (not (agent--before-exit-skill-duration-p backend buffer)))

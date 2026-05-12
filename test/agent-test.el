@@ -324,6 +324,24 @@
         (should-not agent--before-exit-skill-sent)
         (should-not agent--before-exit-skill-exit-pending)))))
 
+(ert-deftest agent-test-run-skill-before-exit-honors-buffer-local-inhibit ()
+  "Do not submit before-exit skills when the session inhibits them."
+  (let ((agent-backends nil)
+        (agent-before-exit-skill-name "session-retro")
+        (agent-before-exit-skill-directories nil)
+        called)
+    (with-temp-buffer
+      (let ((buf (current-buffer)))
+        (setq-local agent-before-exit-skill-inhibit t)
+        (agent-register-backend
+         'codex
+         (agent-test--backend
+          :send-command (lambda (&rest _args) (setq called t))))
+        (should (agent-run-skill-before-exit 'codex buf))
+        (should-not called)
+        (should-not agent--before-exit-skill-sent)
+        (should-not agent--before-exit-skill-exit-pending)))))
+
 (ert-deftest agent-test-run-skill-before-exit-allows-long-sessions ()
   "Submit before-exit skills after the minimum duration."
   (let ((agent-backends nil)

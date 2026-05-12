@@ -1017,6 +1017,8 @@ via `codex exec'."
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty"))
     (when source-buffer
+      (with-current-buffer source-buffer
+        (setq-local agent-before-exit-skill-inhibit t))
       (agent--force-kill-buffer source-buffer))
     (let ((agent-codex--pending-account
            (or account (agent-codex--resolve-account))))

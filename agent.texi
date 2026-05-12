@@ -219,6 +219,10 @@ Leave @code{agent-before-exit-skill-directories} nil to run the skill before
 exiting every session. @code{agent-before-exit-skill-min-duration-seconds} defaults
 to 60 seconds, so very short sessions skip the before-exit skill when the
 backend can report elapsed session time.
+Set the buffer-local variable @code{agent-before-exit-skill-inhibit} non-nil for
+orchestration sessions that must close immediately without running the
+configured before-exit skill. Handoff commands set this automatically on the
+source session before closing it.
 
 Backends can veto that automatic close while the submitted skill invocation is
 still visible as unaccepted prompt input. Codex uses this to avoid closing a

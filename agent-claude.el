@@ -2518,6 +2518,8 @@ the handoff contents passed as a CLI argument."
     (when (string-empty-p prompt)
       (user-error "Handoff file is empty — run /handoff first"))
     (when source-buffer
+      (with-current-buffer source-buffer
+        (setq-local agent-before-exit-skill-inhibit t))
       (agent--force-kill-buffer source-buffer))
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))
       (claude-code--start nil (list prompt) nil t))))
