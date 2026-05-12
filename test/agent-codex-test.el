@@ -246,6 +246,58 @@
       (when (buffer-live-p buf)
         (kill-buffer buf)))))
 
+(ert-deftest agent-codex-test-detects-background-terminal-work ()
+  "Detect Codex status lines that report background terminal work."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "• Working (13m 19s · esc to interrupt) · 1 background terminal running · /ps to view\n")
+          (should (agent-codex--has-background-tasks-p buf)))
+      (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-detects-working-status ()
+  "Detect Codex status lines that report an active response."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "• Working (20m 58s • esc to interrupt)\n")
+          (should (agent-codex--busy-p buf)))
+      (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-working-status-is-not-waiting ()
+  "Do not render stale Codex waiting flags while Codex is working."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq-local agent--waiting-for-input (current-time))
+          (insert "• Working (20m 58s • esc to interrupt)\n")
+          (should-not (agent--session-waiting-p buf 'codex)))
+      (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-waiting-face-uses-background-work ()
+  "Show Codex waiting sessions with background work as background-work."
+  (let ((buf (generate-new-buffer "*codex-test*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (insert "• Working (13m 19s) · 2 background terminals running\n"))
+          (should (eq (agent--waiting-face buf 'codex)
+                      'agent-waiting-with-background)))
+      (kill-buffer buf))))
+
+(ert-deftest agent-codex-test-notify-uses-agent-alert ()
+  "Route Codex notifications through the shared Agent alert setting."
+  (let ((agent-alert-on-ready t)
+        (agent-alert-style 'visual)
+        visual)
+    (cl-letf (((symbol-function 'codex-default-notification) #'ignore)
+              ((symbol-function 'agent--alert-visual)
+               (lambda (title message)
+                 (setq visual (list title message)))))
+      (agent-codex-notify "Codex Ready" "Waiting for your response")
+      (should (equal visual
+                     '("Codex Ready" "Waiting for your response"))))))
+
 ;;;; Theme sync
 
 (ert-deftest agent-codex-test-sync-theme-updates-existing-tui-section ()

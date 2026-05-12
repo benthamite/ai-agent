@@ -45,7 +45,7 @@ The package depends on =transient= for menus and =consult= for completion. The C
 #+vindex: agent-sigwinch-delay
 The user option ~agent-protect-buffers~ is a boolean that defaults to ~t~. When enabled, killing a live AI session buffer prompts for confirmation through ~agent-protect-buffer~. Buffers whose processes have already exited are allowed to die without the prompt.
 
-The user option ~agent-alert-on-ready~ is a boolean that defaults to ~nil~. When enabled, backend notification handlers can call ~agent-notify~ to emit visual and/or audible alerts when a session is waiting for input. ~agent-alert-style~ selects ~visual~, ~sound~, or ~both~; it defaults to ~both~. ~agent-alert-sound~ defaults to ~nil~; set it to a sound file to enable sound alerts. ~agent-alert-sound-player~ optionally names an external sound player when Emacs sound support is unavailable.
+The user option ~agent-alert-on-ready~ is a boolean that defaults to ~nil~. When enabled, backend notification handlers can call ~agent-notify~ to emit visual and/or audible alerts when a session is waiting for input. Codex's own terminal-bell notification path is routed through the same alert setting. ~agent-alert-style~ selects ~visual~, ~sound~, or ~both~; it defaults to ~both~. ~agent-alert-sound~ defaults to ~nil~; set it to a sound file to enable sound alerts. ~agent-alert-sound-player~ optionally names an external sound player when Emacs sound support is unavailable.
 
 The user option ~agent-backtrace-file~ controls where ~agent-save-backtrace~, ~agent-claude-debug-backtrace~, and ~agent-codex-debug-backtrace~ write Emacs backtraces. It defaults to a file in ~temporary-file-directory~.
 
@@ -276,7 +276,7 @@ The function ~agent-register-backend~ registers an AI tool by associating a back
 #+findex: agent-claude-status-weekly-usage
 #+findex: agent-codex-status-model
 #+findex: agent-codex-status-duration-ms
-The Claude and Codex status helpers are intended for modeline integrations such as =doom-modeline=. Claude status functions read the current session status JSON and expose model, cost, context, duration, and token information. Claude usage functions expose account-level utilization returned by the Anthropic usage endpoint. Codex status functions expose the configured model and elapsed session duration.
+The Claude and Codex status helpers are intended for modeline integrations such as =doom-modeline=. Claude status functions read the current session status JSON and expose model, cost, context, duration, and token information. Claude usage functions expose account-level utilization returned by the Anthropic usage endpoint. Codex status functions expose the configured model and elapsed session duration. The session switcher uses backend busy and background-work detectors to avoid showing actively responding sessions as waiting, and to distinguish truly idle waiting sessions from sessions that are waiting for input while background terminals, agents, or tasks are still running.
 
 * Transient menu
 :PROPERTIES:

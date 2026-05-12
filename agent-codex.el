@@ -192,6 +192,8 @@ Source: SVG Repo (CC0).")
                                         (if (string-empty-p svg) "CX" svg)))
         :account (lambda (buf)
                    (buffer-local-value 'agent-codex--buffer-account buf))
+        :has-background-tasks-p #'agent-codex--has-background-tasks-p
+        :busy-p #'agent-codex--busy-p
         :label "Codex"
         :discover-skills #'agent-codex--discover-skills
         :handoff #'agent-codex-handoff
@@ -573,6 +575,48 @@ the file when the theme value actually changes."
   nil)
 
 ;;;;; Notification handling
+
+(defconst agent-codex--background-tasks-regexp
+  "· *[0-9]+ +background +\\(?:[[:word:]-]+ +\\)?\\(?:terminals?\\|agents?\\|tasks?\\) +running"
+  "Regexp matching Codex status lines with active background work.")
+
+(defconst agent-codex--working-regexp
+  "^• +Working[[:alnum:][:space:][:punct:]]*$"
+  "Regexp matching Codex status lines for active response work.")
+
+(defun agent-codex-notify (title message)
+  "Notification function combining Codex pulse with optional alert.
+TITLE is the notification title.  MESSAGE is the notification body.
+When `agent-alert-on-ready' is non-nil, dispatch to the style
+configured in `agent-alert-style'."
+  (codex-default-notification title message)
+  (when agent-alert-on-ready
+    (agent--alert-visual title message)
+    (agent--alert-sound)))
+
+(defun agent-codex--has-background-tasks-p (&optional buffer)
+  "Return non-nil when Codex session BUFFER has active background work.
+Scans the tail of the terminal buffer for Codex's status-line
+indicator, e.g. \"1 background terminal running\"."
+  (let ((buf (or buffer (current-buffer))))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char (point-max))
+          (re-search-backward agent-codex--background-tasks-regexp
+                              (max (point-min) (- (point-max) 800))
+                              t))))))
+
+(defun agent-codex--busy-p (&optional buffer)
+  "Return non-nil when Codex session BUFFER is actively responding."
+  (let ((buf (or buffer (current-buffer))))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char (point-max))
+          (re-search-backward agent-codex--working-regexp
+                              (max (point-min) (- (point-max) 800))
+                              t))))))
 
 (defun agent-codex--handle-notification (message)
   "Handle a notification event from Codex CLI.
@@ -1068,6 +1112,7 @@ With prefix ARG, use Codex CLI's `--last' flag."
 (defun agent-codex--install-hooks ()
   "Install Agent hooks for Codex integration."
   (add-hook 'codex-event-hook #'agent-codex--handle-notification)
+  (setq codex-notification-function #'agent-codex-notify)
   (add-hook 'kill-buffer-query-functions #'agent-protect-buffer)
   (add-hook 'codex-start-hook #'agent--assign-session-key)
   (add-hook 'codex-start-hook #'agent--refresh-display-names)

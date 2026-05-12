@@ -113,6 +113,8 @@ Optional session metadata:
   :has-background-tasks-p function (buffer) -> bool
                            (non-nil if the session has ongoing
                            background work while idle for input)
+  :busy-p                 function (buffer) -> bool
+                           (non-nil if the session is actively responding)
   :duration-ms           function (buffer) -> integer or nil
                            (elapsed session duration in milliseconds)
 
@@ -556,8 +558,7 @@ to the backend's :label or symbol name."
          (name (agent-display-name buf))
          (label (if (and icon (not (string-empty-p icon)))
                     (format "%s %s" icon name) name))
-         (waiting (buffer-local-value
-                   'agent--waiting-for-input buf))
+         (waiting (agent--session-waiting-p buf backend))
          (cmd (make-symbol (format "ai-switch-%s" key)))
          (spec (list key label cmd)))
     (when waiting
@@ -565,6 +566,15 @@ to the backend's :label or symbol name."
                          (list :face (agent--waiting-face buf backend)))))
     (fset cmd (lambda () (interactive) (switch-to-buffer buf)))
     spec))
+
+(defun agent--session-waiting-p (buffer backend)
+  "Return non-nil when BUFFER is waiting for input.
+BACKEND may provide `:busy-p' to suppress a stale waiting flag
+while the session is actively responding."
+  (and (buffer-local-value 'agent--waiting-for-input buffer)
+       (not (and backend
+                 (when-let* ((fn (agent--backend-get backend :busy-p)))
+                   (funcall fn buffer))))))
 
 (defun agent--waiting-face (buffer backend)
   "Return the face for BUFFER's waiting indicator.
@@ -701,7 +711,10 @@ configured alert style."
   (let (best-buf best-time)
     (dolist (buf (agent--find-all-buffers))
       (when (buffer-live-p buf)
-        (let ((ts (buffer-local-value 'agent--waiting-for-input buf)))
+        (let* ((backend (agent--detect-backend buf))
+               (ts (and backend
+                        (agent--session-waiting-p buf backend)
+                        (buffer-local-value 'agent--waiting-for-input buf))))
           (when (and ts (or (null best-time) (time-less-p best-time ts)))
             (setq best-buf buf best-time ts)))))
     (if best-buf
