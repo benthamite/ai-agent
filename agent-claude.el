@@ -2188,8 +2188,23 @@ FILE defaults to `agent-claude-settings-file'."
 
 (defun agent-claude--ensure-statusline (settings)
   "Ensure SETTINGS has an agent statusline command."
-  (unless (gethash "statusLine" settings)
+  (when (agent-claude--replace-statusline-p settings)
     (puthash "statusLine" (agent-claude--statusline-entry) settings)))
+
+(defun agent-claude--replace-statusline-p (settings)
+  "Return non-nil when SETTINGS needs this package's statusline."
+  (let ((statusline (gethash "statusLine" settings)))
+    (or (not statusline)
+        (agent-claude--agent-statusline-p statusline))))
+
+(defun agent-claude--agent-statusline-p (statusline)
+  "Return non-nil when STATUSLINE is an agent-owned statusline."
+  (and (hash-table-p statusline)
+       (let ((command (gethash "command" statusline)))
+         (and (stringp command)
+              (string-match-p
+               "\\(?:^\\|/\\)claude-code-statusline\\.sh\\(?:\\'\\|[[:space:]]\\)"
+               command)))))
 
 (defun agent-claude--statusline-entry ()
   "Return the JSON object for the Claude Code statusline command."

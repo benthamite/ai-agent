@@ -585,6 +585,49 @@
       (delete-file settings)
       (delete-file script))))
 
+(ert-deftest agent-claude-test-ensure-statusline-config-replaces-stale-agent-command ()
+  "Replace stale agent-owned statusLine commands."
+  (let ((settings (make-temp-file "statusline-test" nil ".json"))
+        (script (agent-claude-test--executable)))
+    (unwind-protect
+        (let ((agent-claude-statusline-script script))
+          (with-temp-file settings
+            (insert "{"
+                    "\"statusLine\":{"
+                    "\"type\":\"command\","
+                    "\"command\":\"~/My\\\\ Drive/dotfiles/emacs/extras/etc/claude-code-statusline.sh\","
+                    "\"padding\":0"
+                    "}}"))
+          (should (agent-claude-ensure-statusline-config settings))
+          (let* ((data (agent-claude--read-json-object settings))
+                 (statusline (gethash "statusLine" data))
+                 (command (gethash "command" statusline)))
+            (should (string-match-p (regexp-quote script) command))
+            (should (string-match-p "AGENT_CLAUDE_STATUS_DIR=" command))))
+      (delete-file settings)
+      (delete-file script))))
+
+(ert-deftest agent-claude-test-ensure-statusline-config-preserves-custom-command ()
+  "Do not replace unrelated user statusLine commands."
+  (let ((settings (make-temp-file "statusline-test" nil ".json"))
+        (script (agent-claude-test--executable)))
+    (unwind-protect
+        (let ((agent-claude-statusline-script script))
+          (with-temp-file settings
+            (insert "{"
+                    "\"statusLine\":{"
+                    "\"type\":\"command\","
+                    "\"command\":\"/usr/bin/custom-statusline\","
+                    "\"padding\":0"
+                    "}}"))
+          (should-not (agent-claude-ensure-statusline-config settings))
+          (let* ((data (agent-claude--read-json-object settings))
+                 (statusline (gethash "statusLine" data)))
+            (should (equal (gethash "command" statusline)
+                           "/usr/bin/custom-statusline"))))
+      (delete-file settings)
+      (delete-file script))))
+
 (ert-deftest agent-claude-test-ensure-hooks-config-valid-empty-json ()
   "Write Stop and Notification hooks into an empty settings object."
   (let ((settings (make-temp-file "hooks-test" nil ".json"))
