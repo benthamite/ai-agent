@@ -201,7 +201,7 @@ The command @code{agent-start-or-switch} is the main entry point. If no sessions
 
 The command @code{agent-run-skill} discovers skills from every loaded backend that implements skill discovery. It disambiguates same-named skills by backend label, prompts for declared arguments when a skill frontmatter requests them, and dispatches the invocation to the selected backend. Claude and Codex backends scan global and project-local programmatic skill directories, using both @code{project-current} and nearby tool directories as project-root signals, so batch-only skills can be run from this command without being loaded into ordinary interactive agent sessions.
 
-The command @code{agent-capture-prompt} opens a session-specific Org file and appends a new prompt entry. The command @code{agent-insert-captured-prompt} reads pending nonempty entries for the current session, prompts for one, inserts its text into the backend prompt without submitting it, and marks the Org entry with an @samp{INSERTED} timestamp. With a prefix argument, it includes already inserted entries.
+The command @code{agent-capture-prompt} opens a session-specific Org file and appends a new prompt entry. The command @code{agent-insert-captured-prompt} reads pending nonempty entries for the current session, prompts for one with a short body preview in the completion candidate, inserts its text into the backend prompt without submitting it, and marks the Org entry with an @samp{INSERTED} timestamp. With a prefix argument, it includes already inserted entries.
 
 The command @code{agent-post-push-ci} runs the @code{post-push-ci} skill through the
 selected backend with @samp{--no-push --commit HEAD}. Use it after a push has

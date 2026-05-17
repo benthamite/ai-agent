@@ -543,6 +543,20 @@
                 (should (plist-get (cadr all) :inserted)))))))
       (delete-directory agent-prompt-capture-directory t)))
 
+(ert-deftest agent-test-captured-prompt-candidate-previews-body ()
+  "Show a truncated prompt body preview in completion candidates."
+  (let* ((text (concat "First line\nSecond line with extra spacing "
+                       (make-string 120 ?x)))
+         (prompt (list :title "Prompt A"
+                       :created "[2026-05-17 Sun 10:03]"
+                       :text text))
+         (candidate (agent--captured-prompt-candidate prompt)))
+    (should (string-prefix-p
+             "[2026-05-17 Sun 10:03] Prompt A: First line Second line"
+             candidate))
+    (should (string-suffix-p "..." candidate))
+    (should (eq (get-text-property 0 'agent-prompt candidate) prompt))))
+
 ;;;; Alerts
 
 (ert-deftest agent-test-alert-sound-error-is-nonfatal ()

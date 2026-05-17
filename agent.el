@@ -326,6 +326,9 @@ and cleared when input is sent.")
 (defvar-local agent--prompt-capture-save-timer nil
   "Idle timer used to save prompt capture buffers.")
 
+(defconst agent--captured-prompt-preview-width 100
+  "Maximum width for prompt body previews in completion candidates.")
+
 ;;;; Forward declarations
 
 (defvar eat-terminal)
@@ -1152,10 +1155,25 @@ non-nil, include prompts already marked as inserted."
 
 (defun agent--captured-prompt-candidate (prompt)
   "Return a completion candidate for captured PROMPT."
-  (let ((label (if-let* ((created (plist-get prompt :created)))
-                   (format "%s %s" created (plist-get prompt :title))
-                 (plist-get prompt :title))))
+  (let ((label (agent--captured-prompt-candidate-label prompt)))
     (propertize label 'agent-prompt prompt)))
+
+(defun agent--captured-prompt-candidate-label (prompt)
+  "Return the completion label for captured PROMPT."
+  (let ((heading (if-let* ((created (plist-get prompt :created)))
+                     (format "%s %s" created (plist-get prompt :title))
+                   (plist-get prompt :title)))
+        (preview (agent--captured-prompt-preview prompt)))
+    (if (string-empty-p preview)
+        heading
+      (format "%s: %s" heading preview))))
+
+(defun agent--captured-prompt-preview (prompt)
+  "Return a single-line truncated preview for captured PROMPT."
+  (truncate-string-to-width
+   (replace-regexp-in-string
+    "[[:space:]\n]+" " " (string-trim (or (plist-get prompt :text) "")))
+   agent--captured-prompt-preview-width nil nil "..."))
 
 (defun agent--mark-captured-prompt-inserted (prompt)
   "Mark PROMPT's Org entry as inserted."
