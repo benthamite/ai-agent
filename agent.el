@@ -247,6 +247,18 @@ that function is available."
   :type 'file
   :group 'agent)
 
+(defcustom agent-prompt-capture-directory
+  (expand-file-name "agent/prompts/" user-emacs-directory)
+  "Directory where session-specific prompt capture files are stored."
+  :type 'directory
+  :group 'agent)
+
+(defcustom agent-prompt-capture-auto-save-delay 1
+  "Idle seconds before prompt capture buffers are saved.
+Set to nil to disable automatic saving of capture buffers."
+  :type '(choice (const :tag "Disabled" nil) number)
+  :group 'agent)
+
 (defcustom agent-alert-on-ready nil
   "When non-nil, alert the user when an AI session finishes responding."
   :type 'boolean
@@ -311,6 +323,9 @@ and cleared when input is sent.")
 (defvar agent--sync-theme-timer nil
   "Pending timer for deferred theme sync, or nil.")
 
+(defvar-local agent--prompt-capture-save-timer nil
+  "Idle timer used to save prompt capture buffers.")
+
 ;;;; Forward declarations
 
 (defvar eat-terminal)
@@ -323,6 +338,10 @@ and cleared when input is sent.")
 (declare-function elpaca-get "elpaca")
 (declare-function elpaca-source-dir "elpaca")
 (declare-function find-library-name "find-func")
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+(declare-function org-entry-get "org" (pom property &optional inherit literal-nil))
+(declare-function org-get-heading "org" (&optional no-tags no-todo no-priority no-comment))
+(declare-function outline-next-heading "outline" ())
 
 (declare-function consult--read "consult")
 (declare-function consult--prefix-group "consult")
@@ -344,6 +363,7 @@ and cleared when input is sent.")
 (defvar yas-minor-mode)
 (defvar yas-prompt-functions)
 (defvar yas--tables)
+(defvar org-heading-regexp)
 
 ;;;; Theme sync
 
@@ -900,6 +920,222 @@ ORIG-FN is the original escape command."
 
 ;;;; Command dispatchers
 
+;;;; Prompt capture
+
+;;;###autoload
+(defun agent-capture-prompt (&optional buffer)
+  "Open a persisted Org capture entry for an AI session BUFFER.
+When BUFFER is nil, use the current AI session buffer or prompt
+for a session.  The capture file is specific to the resolved
+session identity, so prompts survive Emacs restarts and can later
+be retrieved with `agent-insert-captured-prompt'."
+  (interactive)
+  (let* ((session-buffer (agent--resolve-session-buffer buffer))
+         (backend (agent--detect-backend session-buffer))
+         (file (agent--prompt-capture-file backend session-buffer)))
+    (agent--open-prompt-capture-file file backend session-buffer)))
+
+;;;###autoload
+(defun agent-insert-captured-prompt (&optional buffer)
+  "Insert a captured prompt into an AI session BUFFER.
+Prompts are loaded from the current session's persisted Org
+capture file.  The selected prompt is inserted into the CLI input
+field but is not submitted."
+  (interactive)
+  (let* ((session-buffer (agent--resolve-session-buffer buffer))
+         (backend (agent--detect-backend session-buffer))
+         (send-fn (agent--backend-get backend :send-command))
+         (prompts (agent--captured-prompts backend session-buffer)))
+    (unless send-fn
+      (user-error "Backend `%s' does not support prompt insertion" backend))
+    (unless prompts
+      (user-error "No captured prompts for this session"))
+    (funcall send-fn (agent--select-captured-prompt prompts) session-buffer)))
+
+(defun agent--resolve-session-buffer (&optional buffer)
+  "Return an AI session buffer from BUFFER, current context, or prompt."
+  (cond
+   ((and (buffer-live-p buffer)
+         (agent--detect-backend buffer))
+    buffer)
+   ((agent--detect-backend (current-buffer))
+    (current-buffer))
+   (t
+    (agent--read-session-buffer))))
+
+(defun agent--read-session-buffer ()
+  "Prompt for and return an active AI session buffer."
+  (let ((buffers (agent--find-all-buffers)))
+    (unless buffers
+      (user-error "No AI sessions"))
+    (if (= (length buffers) 1)
+        (car buffers)
+      (let* ((candidates
+              (mapcar (lambda (buf)
+                        (propertize (agent--session-candidate-label buf)
+                                    'agent-buffer buf))
+                      buffers))
+             (choice (completing-read "Session: " candidates nil t)))
+        (or (get-text-property 0 'agent-buffer choice)
+            (get-text-property
+             0 'agent-buffer
+             (cl-find choice candidates :test #'string=)))))))
+
+(defun agent--session-candidate-label (buffer)
+  "Return a completion label for session BUFFER."
+  (let* ((backend (agent--detect-backend buffer))
+         (label (agent--backend-get backend :label))
+         (account (when-let* ((fn (agent--backend-get backend :account)))
+                    (funcall fn buffer))))
+    (string-join (delq nil (list label account (agent-display-name buffer)))
+                 " ")))
+
+(defun agent--prompt-capture-file (backend buffer)
+  "Return the Org capture file for BACKEND session BUFFER."
+  (expand-file-name
+   (concat (agent--prompt-session-slug backend buffer) ".org")
+   agent-prompt-capture-directory))
+
+(defun agent--prompt-session-slug (backend buffer)
+  "Return a stable file slug for BACKEND session BUFFER."
+  (format "%s-%s"
+          backend
+          (secure-hash 'sha1 (agent--prompt-session-identity backend buffer))))
+
+(defun agent--prompt-session-identity (backend buffer)
+  "Return the stable prompt capture identity for BACKEND session BUFFER."
+  (let* ((directory (or (agent--buffer-directory backend buffer) ""))
+         (account (when-let* ((fn (agent--backend-get backend :account)))
+                    (funcall fn buffer)))
+         (instance (funcall (agent--backend-get backend :extract-instance-name)
+                            (buffer-name buffer))))
+    (prin1-to-string (list backend account directory instance))))
+
+(defun agent--open-prompt-capture-file (file backend buffer)
+  "Open FILE and append a prompt entry for BACKEND session BUFFER."
+  (require 'org)
+  (make-directory (file-name-directory file) t)
+  (let ((capture-buffer (find-file-noselect file)))
+    (with-current-buffer capture-buffer
+      (org-mode)
+      (agent-prompt-capture-mode 1)
+      (agent--ensure-prompt-capture-header backend buffer)
+      (agent--append-prompt-capture-entry)
+      (save-buffer))
+    (pop-to-buffer capture-buffer)))
+
+(defun agent--ensure-prompt-capture-header (backend buffer)
+  "Insert the prompt capture file header for BACKEND session BUFFER."
+  (when (zerop (buffer-size))
+    (insert "#+title: Agent prompt captures\n")
+    (insert "#+agent_backend: " (symbol-name backend) "\n")
+    (insert "#+agent_session: " (agent-display-name buffer) "\n\n")))
+
+(defun agent--append-prompt-capture-entry ()
+  "Append a new prompt capture entry at the end of the current buffer."
+  (goto-char (point-max))
+  (unless (bolp) (insert "\n"))
+  (insert "* Prompt " (format-time-string "%Y-%m-%d %H:%M") "\n")
+  (insert ":PROPERTIES:\n")
+  (insert ":CREATED: " (format-time-string "[%Y-%m-%d %a %H:%M]") "\n")
+  (insert ":END:\n\n")
+  (point))
+
+(define-minor-mode agent-prompt-capture-mode
+  "Automatically save persisted Agent prompt capture buffers."
+  :lighter " AgentCapture"
+  (if agent-prompt-capture-mode
+      (add-hook 'after-change-functions
+                #'agent--prompt-capture-after-change nil t)
+    (remove-hook 'after-change-functions
+                 #'agent--prompt-capture-after-change t)
+    (agent--cancel-prompt-capture-save)))
+
+(defun agent--prompt-capture-after-change (&rest _)
+  "Schedule an automatic save for the current prompt capture buffer."
+  (when agent-prompt-capture-auto-save-delay
+    (agent--cancel-prompt-capture-save)
+    (setq agent--prompt-capture-save-timer
+          (run-with-idle-timer agent-prompt-capture-auto-save-delay
+                               nil
+                               #'agent--save-prompt-capture-buffer
+                               (current-buffer)))))
+
+(defun agent--cancel-prompt-capture-save ()
+  "Cancel the pending prompt capture save timer, if any."
+  (when (timerp agent--prompt-capture-save-timer)
+    (cancel-timer agent--prompt-capture-save-timer))
+  (setq agent--prompt-capture-save-timer nil))
+
+(defun agent--save-prompt-capture-buffer (buffer)
+  "Save prompt capture BUFFER when it is still live and modified."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq agent--prompt-capture-save-timer nil)
+      (when (and buffer-file-name (buffer-modified-p))
+        (save-buffer)))))
+
+(defun agent--captured-prompts (backend buffer)
+  "Return nonempty captured prompts for BACKEND session BUFFER."
+  (let ((file (agent--prompt-capture-file backend buffer)))
+    (when (file-exists-p file)
+      (agent--read-captured-prompts file))))
+
+(defun agent--read-captured-prompts (file)
+  "Read captured prompt entries from Org FILE."
+  (require 'org)
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (let (prompts)
+      (goto-char (point-min))
+      (while (re-search-forward org-heading-regexp nil t)
+        (goto-char (match-beginning 0))
+        (when-let* ((prompt (agent--captured-prompt-at-point)))
+          (push prompt prompts))
+        (or (outline-next-heading) (goto-char (point-max))))
+      (nreverse prompts))))
+
+(defun agent--captured-prompt-at-point ()
+  "Return the captured prompt at point as a plist, or nil."
+  (org-back-to-heading t)
+  (let* ((title (org-get-heading t t t t))
+         (created (org-entry-get (point) "CREATED"))
+         (body-start (agent--captured-prompt-body-start))
+         (body-end (save-excursion
+                     (or (outline-next-heading) (goto-char (point-max)))
+                     (point)))
+         (text (string-trim
+                (buffer-substring-no-properties body-start body-end))))
+    (unless (string-empty-p text)
+      (list :title title :created created :text text))))
+
+(defun agent--captured-prompt-body-start ()
+  "Return the content start for the Org heading at point."
+  (save-excursion
+    (forward-line 1)
+    (when (looking-at-p "[ \t]*:PROPERTIES:[ \t]*$")
+      (when (re-search-forward "^[ \t]*:END:[ \t]*$" nil t)
+        (forward-line 1)))
+    (point)))
+
+(defun agent--select-captured-prompt (prompts)
+  "Prompt for one of PROMPTS and return its text."
+  (let* ((candidates (mapcar #'agent--captured-prompt-candidate prompts))
+         (choice (completing-read "Prompt: " candidates nil t)))
+    (plist-get (or (get-text-property 0 'agent-prompt choice)
+                   (get-text-property
+                    0 'agent-prompt
+                    (cl-find choice candidates :test #'string=)))
+               :text)))
+
+(defun agent--captured-prompt-candidate (prompt)
+  "Return a completion candidate for captured PROMPT."
+  (let ((label (if-let* ((created (plist-get prompt :created)))
+                   (format "%s %s" created (plist-get prompt :title))
+                 (plist-get prompt :title))))
+    (propertize label 'agent-prompt prompt)))
+
 (defun agent--resolve-backend ()
   "Return the backend for the current context.
 If in a session buffer, use that backend.  If only one backend is
@@ -1318,6 +1554,8 @@ Dispatches to the backend's `:restart' handler."
     ("S" "disable scrollback" agent-disable-scrollback-truncation)]
    ["Tools"
     ("s" "run skill" agent-run-skill)
+    ("p" "capture prompt" agent-capture-prompt)
+    ("i" "insert prompt" agent-insert-captured-prompt)
     ("c" "post-push CI" agent-post-push-ci)
     ("a" "audit project" agent-audit-project)
     ("d" "debug backtrace" agent-debug-backtrace)

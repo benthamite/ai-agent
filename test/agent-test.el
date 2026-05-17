@@ -462,6 +462,75 @@
                            (agent--discover-all-skills))
                    '("visible")))))
 
+;;;; Prompt capture
+
+(ert-deftest agent-test-prompt-capture-file-is-session-specific ()
+  "Build prompt capture paths from stable session identity."
+  (let ((agent-backends nil)
+        (agent-prompt-capture-directory temporary-file-directory))
+    (with-temp-buffer
+      (rename-buffer "*one:~/repo/project/:default*" t)
+      (let ((buf (current-buffer)))
+        (agent-register-backend
+         'one
+         (agent-test--backend
+          :buffer-p (lambda (candidate) (eq candidate buf))
+          :directory (lambda (_buffer) "/tmp/project/")
+          :account (lambda (_buffer) "work")
+          :extract-instance-name (lambda (_buffer-name) "default")))
+        (should
+         (string-prefix-p
+          (expand-file-name "one-" temporary-file-directory)
+          (agent--prompt-capture-file 'one buf)))))))
+
+(ert-deftest agent-test-read-captured-prompts-skips-empty-entries ()
+  "Read nonempty Org prompt capture entries."
+  (let ((file (make-temp-file "agent-prompts" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* Empty\n")
+            (insert ":PROPERTIES:\n:CREATED: [2026-05-17 Sun 10:00]\n:END:\n\n")
+            (insert "* Use this\n")
+            (insert ":PROPERTIES:\n:CREATED: [2026-05-17 Sun 10:01]\n:END:\n\n")
+            (insert "First line\nSecond line\n"))
+          (let ((prompts (agent--read-captured-prompts file)))
+            (should (= (length prompts) 1))
+            (should (equal (plist-get (car prompts) :title) "Use this"))
+            (should (equal (plist-get (car prompts) :text)
+                           "First line\nSecond line"))))
+      (delete-file file))))
+
+(ert-deftest agent-test-insert-captured-prompt-sends-selected-text ()
+  "Insert the selected persisted prompt into the session."
+  (let ((agent-backends nil)
+        (agent-prompt-capture-directory
+         (make-temp-file "agent-prompts" t))
+        sent)
+    (unwind-protect
+        (with-temp-buffer
+          (rename-buffer "*one:~/repo/project/:default*" t)
+          (let ((buf (current-buffer)))
+            (agent-register-backend
+             'one
+             (agent-test--backend
+              :buffer-p (lambda (candidate) (eq candidate buf))
+              :find-all-buffers (lambda () (list buf))
+              :directory (lambda (_buffer) "/tmp/project/")
+              :send-command (lambda (text target)
+                              (setq sent (list text target)))))
+            (let ((file (agent--prompt-capture-file 'one buf)))
+              (make-directory (file-name-directory file) t)
+              (with-temp-file file
+                (insert "* Prompt A\n\nAlpha\n")
+                (insert "* Prompt B\n\nBeta\n")))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (_prompt candidates &rest _)
+                         (cadr candidates))))
+              (agent-insert-captured-prompt buf)
+              (should (equal sent (list "Beta" buf)))))))
+      (delete-directory agent-prompt-capture-directory t)))
+
 ;;;; Alerts
 
 (ert-deftest agent-test-alert-sound-error-is-nonfatal ()
