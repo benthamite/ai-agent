@@ -195,7 +195,7 @@ The Codex backend options control account selection, handoff, skill discovery, n
 @findex agent-fix-rendering
 @findex agent-disable-scrollback-truncation
 @findex agent-snippet-tab
-The command @code{agent-menu} opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, prompt capture, captured prompt insertion, project audit, backtrace debugging, alert toggles, and terminal maintenance. Backend modules append their own suffixes to the same menu when loaded.
+The command @code{agent-menu} opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, alert toggles, terminal maintenance, and a separate Prompts section for prompt capture and captured prompt insertion. Backend modules append their own suffixes to the same menu when loaded.
 
 The command @code{agent-start-or-switch} is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
 

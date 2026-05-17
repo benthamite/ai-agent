@@ -1607,14 +1607,15 @@ Dispatches to the backend's `:restart' handler."
     ("S" "disable scrollback" agent-disable-scrollback-truncation)]
    ["Tools"
     ("s" "run skill" agent-run-skill)
-    ("p" "capture prompt" agent-capture-prompt)
-    ("i" "insert prompt" agent-insert-captured-prompt)
     ("c" "post-push CI" agent-post-push-ci)
     ("a" "audit project" agent-audit-project)
     ("d" "debug backtrace" agent-debug-backtrace)
     ""
     "Alerts"
     ("T" "toggle alert" agent-toggle-alert)]
+   ["Prompts"
+    ("p" "capture prompt" agent-capture-prompt)
+    ("i" "insert prompt" agent-insert-captured-prompt)]
    ["Options"
     ("-A" agent--infix-alert-on-ready)
     ("-p" agent--infix-protect-buffers)
