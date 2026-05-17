@@ -341,6 +341,7 @@ and cleared when input is sent.")
 (declare-function org-back-to-heading "org" (&optional invisible-ok))
 (declare-function org-entry-get "org" (pom property &optional inherit literal-nil))
 (declare-function org-get-heading "org" (&optional no-tags no-todo no-priority no-comment))
+(declare-function org-set-property "org" (property value))
 (declare-function outline-next-heading "outline" ())
 
 (declare-function consult--read "consult")
@@ -936,21 +937,29 @@ be retrieved with `agent-insert-captured-prompt'."
     (agent--open-prompt-capture-file file backend session-buffer)))
 
 ;;;###autoload
-(defun agent-insert-captured-prompt (&optional buffer)
+(defun agent-insert-captured-prompt (&optional buffer include-inserted)
   "Insert a captured prompt into an AI session BUFFER.
 Prompts are loaded from the current session's persisted Org
 capture file.  The selected prompt is inserted into the CLI input
-field but is not submitted."
-  (interactive)
+field but is not submitted.  After successful insertion, the
+entry is marked with an INSERTED property so it is hidden from
+future selections.
+
+With prefix argument INCLUDE-INSERTED, include prompts that have
+already been inserted."
+  (interactive (list nil current-prefix-arg))
   (let* ((session-buffer (agent--resolve-session-buffer buffer))
          (backend (agent--detect-backend session-buffer))
          (send-fn (agent--backend-get backend :send-command))
-         (prompts (agent--captured-prompts backend session-buffer)))
+         (prompts (agent--captured-prompts
+                   backend session-buffer include-inserted)))
     (unless send-fn
       (user-error "Backend `%s' does not support prompt insertion" backend))
     (unless prompts
       (user-error "No captured prompts for this session"))
-    (funcall send-fn (agent--select-captured-prompt prompts) session-buffer)))
+    (let ((prompt (agent--select-captured-prompt prompts)))
+      (funcall send-fn (plist-get prompt :text) session-buffer)
+      (agent--mark-captured-prompt-inserted prompt))))
 
 (defun agent--resolve-session-buffer (&optional buffer)
   "Return an AI session buffer from BUFFER, current context, or prompt."
@@ -1075,14 +1084,18 @@ field but is not submitted."
       (when (and buffer-file-name (buffer-modified-p))
         (save-buffer)))))
 
-(defun agent--captured-prompts (backend buffer)
-  "Return nonempty captured prompts for BACKEND session BUFFER."
+(defun agent--captured-prompts (backend buffer &optional include-inserted)
+  "Return nonempty captured prompts for BACKEND session BUFFER.
+When INCLUDE-INSERTED is non-nil, include prompts already marked
+as inserted."
   (let ((file (agent--prompt-capture-file backend buffer)))
     (when (file-exists-p file)
-      (agent--read-captured-prompts file))))
+      (agent--read-captured-prompts file include-inserted))))
 
-(defun agent--read-captured-prompts (file)
-  "Read captured prompt entries from Org FILE."
+(defun agent--read-captured-prompts (file &optional include-inserted)
+  "Read captured prompt entries from Org FILE.
+When INCLUDE-INSERTED is non-nil, include prompts already marked
+as inserted."
   (require 'org)
   (with-temp-buffer
     (insert-file-contents file)
@@ -1091,24 +1104,33 @@ field but is not submitted."
       (goto-char (point-min))
       (while (re-search-forward org-heading-regexp nil t)
         (goto-char (match-beginning 0))
-        (when-let* ((prompt (agent--captured-prompt-at-point)))
+        (when-let* ((prompt (agent--captured-prompt-at-point
+                             file include-inserted)))
           (push prompt prompts))
         (or (outline-next-heading) (goto-char (point-max))))
       (nreverse prompts))))
 
-(defun agent--captured-prompt-at-point ()
-  "Return the captured prompt at point as a plist, or nil."
+(defun agent--captured-prompt-at-point (file include-inserted)
+  "Return the captured prompt at point as a plist, or nil.
+FILE is the Org file being parsed.  When INCLUDE-INSERTED is
+non-nil, include prompts already marked as inserted."
   (org-back-to-heading t)
   (let* ((title (org-get-heading t t t t))
          (created (org-entry-get (point) "CREATED"))
+         (inserted (org-entry-get (point) "INSERTED"))
          (body-start (agent--captured-prompt-body-start))
          (body-end (save-excursion
                      (or (outline-next-heading) (goto-char (point-max)))
                      (point)))
          (text (string-trim
                 (buffer-substring-no-properties body-start body-end))))
-    (unless (string-empty-p text)
-      (list :title title :created created :text text))))
+    (when (and (not (string-empty-p text))
+               (or include-inserted (not inserted)))
+      (list :file file
+            :title title
+            :created created
+            :inserted inserted
+            :text text))))
 
 (defun agent--captured-prompt-body-start ()
   "Return the content start for the Org heading at point."
@@ -1120,14 +1142,13 @@ field but is not submitted."
     (point)))
 
 (defun agent--select-captured-prompt (prompts)
-  "Prompt for one of PROMPTS and return its text."
+  "Prompt for one of PROMPTS and return its plist."
   (let* ((candidates (mapcar #'agent--captured-prompt-candidate prompts))
          (choice (completing-read "Prompt: " candidates nil t)))
-    (plist-get (or (get-text-property 0 'agent-prompt choice)
-                   (get-text-property
-                    0 'agent-prompt
-                    (cl-find choice candidates :test #'string=)))
-               :text)))
+    (or (get-text-property 0 'agent-prompt choice)
+        (get-text-property
+         0 'agent-prompt
+         (cl-find choice candidates :test #'string=)))))
 
 (defun agent--captured-prompt-candidate (prompt)
   "Return a completion candidate for captured PROMPT."
@@ -1135,6 +1156,38 @@ field but is not submitted."
                    (format "%s %s" created (plist-get prompt :title))
                  (plist-get prompt :title))))
     (propertize label 'agent-prompt prompt)))
+
+(defun agent--mark-captured-prompt-inserted (prompt)
+  "Mark PROMPT's Org entry as inserted."
+  (when-let* ((file (plist-get prompt :file)))
+    (let ((buffer (find-file-noselect file)))
+      (with-current-buffer buffer
+        (org-mode)
+        (when (agent--find-captured-prompt prompt)
+          (org-set-property "INSERTED" (format-time-string "[%Y-%m-%d %a %H:%M]"))
+          (save-buffer))))))
+
+(defun agent--find-captured-prompt (prompt)
+  "Move point to PROMPT's matching Org heading in the current buffer."
+  (goto-char (point-min))
+  (catch 'found
+    (while (re-search-forward org-heading-regexp nil t)
+      (goto-char (match-beginning 0))
+      (when (agent--captured-prompt-match-p prompt)
+        (throw 'found t))
+      (or (outline-next-heading) (goto-char (point-max))))
+    nil))
+
+(defun agent--captured-prompt-match-p (prompt)
+  "Return non-nil when the current Org heading matches PROMPT."
+  (when-let* ((candidate (agent--captured-prompt-at-point
+                          (plist-get prompt :file) t)))
+    (and (equal (plist-get candidate :title)
+                (plist-get prompt :title))
+         (equal (plist-get candidate :created)
+                (plist-get prompt :created))
+         (equal (plist-get candidate :text)
+                (plist-get prompt :text)))))
 
 (defun agent--resolve-backend ()
   "Return the backend for the current context.

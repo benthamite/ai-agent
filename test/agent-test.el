@@ -483,16 +483,22 @@
           (expand-file-name "one-" temporary-file-directory)
           (agent--prompt-capture-file 'one buf)))))))
 
-(ert-deftest agent-test-read-captured-prompts-skips-empty-entries ()
-  "Read nonempty Org prompt capture entries."
+(ert-deftest agent-test-read-captured-prompts-skips-empty-and-inserted ()
+  "Read pending nonempty Org prompt capture entries."
   (let ((file (make-temp-file "agent-prompts" nil ".org")))
     (unwind-protect
         (progn
           (with-temp-file file
             (insert "* Empty\n")
             (insert ":PROPERTIES:\n:CREATED: [2026-05-17 Sun 10:00]\n:END:\n\n")
+            (insert "* Inserted\n")
+            (insert ":PROPERTIES:\n")
+            (insert ":CREATED: [2026-05-17 Sun 10:01]\n")
+            (insert ":INSERTED: [2026-05-17 Sun 10:02]\n")
+            (insert ":END:\n\n")
+            (insert "Already used\n")
             (insert "* Use this\n")
-            (insert ":PROPERTIES:\n:CREATED: [2026-05-17 Sun 10:01]\n:END:\n\n")
+            (insert ":PROPERTIES:\n:CREATED: [2026-05-17 Sun 10:03]\n:END:\n\n")
             (insert "First line\nSecond line\n"))
           (let ((prompts (agent--read-captured-prompts file)))
             (should (= (length prompts) 1))
@@ -528,7 +534,13 @@
                        (lambda (_prompt candidates &rest _)
                          (cadr candidates))))
               (agent-insert-captured-prompt buf)
-              (should (equal sent (list "Beta" buf)))))))
+              (should (equal sent (list "Beta" buf)))
+              (let ((pending (agent--captured-prompts 'one buf)))
+                (should (= (length pending) 1))
+                (should (equal (plist-get (car pending) :text) "Alpha")))
+              (let ((all (agent--captured-prompts 'one buf t)))
+                (should (= (length all) 2))
+                (should (plist-get (cadr all) :inserted)))))))
       (delete-directory agent-prompt-capture-directory t)))
 
 ;;;; Alerts
