@@ -3074,9 +3074,9 @@ Signals an error if the status file is missing or incomplete."
     '("l" "logs" agent-claude-agent-log-menu))
   ;; Alerts: after "toggle alert"
   (transient-append-suffix 'agent-menu "T"
-    '("p" "start status polling" agent-claude-start-status-polling))
-  (transient-append-suffix 'agent-menu "p"
-    '("P" "stop status polling" agent-claude-stop-status-polling))
+    '("u" "start status polling" agent-claude-start-status-polling))
+  (transient-append-suffix 'agent-menu "u"
+    '("U" "stop status polling" agent-claude-stop-status-polling))
   ;; Options: after "protect buffers"
   (transient-append-suffix 'agent-menu "-p"
     '("-c" agent-claude--infix-account))
