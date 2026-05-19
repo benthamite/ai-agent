@@ -32,6 +32,8 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'eieio)
+(require 'json)
 (require 'subr-x)
 (eval-and-compile (require 'transient))
 
@@ -129,6 +131,7 @@ Optional command keys for dispatching shared commands:
   :run-skill             function (name &optional args) (run a skill)
   :audit-project         function () (run audit skills on a project)
   :debug-backtrace       function () (analyze backtrace, start session)
+  :debug-slack-message   function () (route Slack message to project)
   :setup-kill-on-exit    function () (auto-kill buffer on process exit)
   :exit                  function () (exit session and kill buffer)
   :restart               function () (restart current session)
@@ -245,6 +248,18 @@ that function is available."
   (expand-file-name "agent-backtrace.el" temporary-file-directory)
   "File where `agent-save-backtrace' writes Emacs backtraces."
   :type 'file
+  :group 'agent)
+
+(defcustom agent-epoch-project-registry-file
+  "/Users/pablostafforini/My Drive/Epoch/projects/automations-dashboard/repo/data/automations.json"
+  "JSON registry of canonical Epoch automation projects."
+  :type 'file
+  :group 'agent)
+
+(defcustom agent-epoch-projects-root
+  "/Users/pablostafforini/My Drive/Epoch/projects/"
+  "Root directory containing canonical Epoch automation project files."
+  :type 'directory
   :group 'agent)
 
 (defcustom agent-prompt-capture-directory
@@ -1542,6 +1557,12 @@ must support `:run-skill'."
   (agent--dispatch :debug-backtrace))
 
 ;;;###autoload
+(defun agent-debug-slack-message ()
+  "Route the Slack message at point to an Epoch project session."
+  (interactive)
+  (agent--dispatch :debug-slack-message))
+
+;;;###autoload
 (defun agent-save-backtrace ()
   "Save the current Emacs backtrace and return its file path."
   (interactive)
@@ -1567,6 +1588,228 @@ must support `:run-skill'."
         (condition-case nil
             (file-name-directory (find-library-name (symbol-name package)))
           (error nil)))))
+
+(defvar gptel-backend)
+(defvar gptel-model)
+(defvar gptel-use-tools)
+(defvar gptel--known-backends)
+(defvar slack-current-buffer)
+(defvar slack-get-permalink-url)
+(declare-function gptel-request "gptel")
+(declare-function slack-buffer-copy-link "slack-room-buffer")
+(declare-function slack-buffer-room "slack-buffer")
+(declare-function slack-buffer-team "slack-buffer")
+(declare-function slack-get-ts "slack-util")
+(declare-function slack-message-body "slack-message")
+(declare-function slack-room-find "slack-room")
+(declare-function slack-room-find-message "slack-room")
+(declare-function slack-request "slack-request")
+(declare-function slack-request-create "slack-request")
+
+(defun agent--debug-slack-message (model backend start-function)
+  "Route the Slack message at point using MODEL, BACKEND, and START-FUNCTION.
+START-FUNCTION is called with the selected project plist and the
+Slack message URL."
+  (agent--with-slack-message-context
+   (lambda (context)
+     (agent--identify-epoch-project-for-slack-message
+      context model backend start-function))))
+
+(defun agent--with-slack-message-context (callback)
+  "Call CALLBACK with the Slack message context at point."
+  (unless (require 'slack nil t)
+    (user-error "Package `slack' is required"))
+  (let* ((ts (agent--slack-message-ts-at-point))
+         (team (agent--slack-team-at-point))
+         (room (agent--slack-room-at-point team))
+         (message (and room ts (slack-room-find-message room ts)))
+         (text (agent--slack-message-text message team)))
+    (unless (and team room ts text)
+      (user-error "No Slack message at point"))
+    (agent--slack-message-url
+     team room ts
+     (lambda (url)
+       (funcall callback
+                (list :text text :url url :ts ts
+                      :room-id (agent--slot-value room 'id)))))))
+
+(defun agent--slack-message-ts-at-point ()
+  "Return the Slack message timestamp at point."
+  (or (and (fboundp 'slack-get-ts) (slack-get-ts))
+      (get-text-property (point) 'ts)
+      (get-text-property (line-beginning-position) 'ts)))
+
+(defun agent--slack-team-at-point ()
+  "Return the Slack team for the current buffer."
+  (and (boundp 'slack-current-buffer)
+       slack-current-buffer
+       (slack-buffer-team slack-current-buffer)))
+
+(defun agent--slack-room-at-point (team)
+  "Return the Slack room at point for TEAM."
+  (or (ignore-errors (slack-buffer-room slack-current-buffer))
+      (when-let* ((room-id (get-text-property (point) 'room-id)))
+        (slack-room-find room-id team))))
+
+(defun agent--slack-message-text (message team)
+  "Return plain text for Slack MESSAGE in TEAM."
+  (string-trim
+   (cond
+    (message (substring-no-properties (slack-message-body message team)))
+    (t (buffer-substring-no-properties
+        (line-beginning-position) (line-end-position))))))
+
+(defun agent--slack-message-url (team room ts callback)
+  "Call CALLBACK with a Slack permalink for TS in ROOM on TEAM."
+  (if (and (fboundp 'slack-buffer-copy-link)
+           (ignore-errors
+             (slack-buffer-copy-link slack-current-buffer ts callback)
+             t))
+      nil
+    (funcall callback (agent--slack-message-url-fallback team room ts))))
+
+(defun agent--slack-message-url-fallback (team room ts)
+  "Return a best-effort Slack permalink for TS in ROOM on TEAM."
+  (let ((domain (or (and (slot-boundp team 'domain)
+                         (agent--slot-value team 'domain))
+                    (and (slot-boundp team 'name)
+                         (agent--slot-value team 'name)))))
+    (unless domain
+      (user-error "Slack team has no domain"))
+    (format "https://%s.slack.com/archives/%s/p%s"
+            domain (agent--slot-value room 'id)
+            (replace-regexp-in-string "\\." "" ts))))
+
+(defun agent--slot-value (object slot)
+  "Return OBJECT's dynamic EIEIO SLOT value."
+  (eieio-oref object slot))
+
+(defun agent--identify-epoch-project-for-slack-message
+    (context model backend callback)
+  "Identify the Epoch project for Slack CONTEXT and call CALLBACK.
+MODEL and BACKEND configure the `gptel' request.  CALLBACK is
+called with the selected project plist and Slack URL."
+  (unless (and (require 'gptel nil t) (fboundp 'gptel-request))
+    (user-error "Package `gptel' is required for Slack message routing"))
+  (let* ((projects (agent-epoch-project-candidates))
+         (prompt (agent--slack-project-selection-prompt context projects))
+         (gptel-backend (alist-get backend gptel--known-backends nil nil
+                                   #'string=))
+         (gptel-model model)
+         (gptel-use-tools nil))
+    (message "Identifying Epoch project from Slack message...")
+    (gptel-request
+     prompt
+     :system (concat
+              "You route Slack messages to existing Epoch automation "
+              "projects. Return ONLY a comma-separated list of project IDs "
+              "from the provided registry, ordered from most likely to least "
+              "likely. Do not invent project IDs.")
+     :callback
+     (lambda (response info)
+       (if (not response)
+           (message "gptel request failed: %s" (plist-get info :status))
+         (agent--read-epoch-project-from-response
+          response projects (plist-get context :url) callback))))))
+
+(defun agent--slack-project-selection-prompt (context projects)
+  "Return a project-selection prompt from Slack CONTEXT and PROJECTS."
+  (format "Slack message URL: %s\n\nSlack message text:\n%s\n\nProjects:\n%s"
+          (plist-get context :url)
+          (plist-get context :text)
+          (string-join (mapcar #'agent--format-epoch-project projects) "\n")))
+
+(defun agent--format-epoch-project (project)
+  "Format PROJECT as one compact registry line."
+  (format "- %s | %s | %s | outputs: %s | notes: %s"
+          (plist-get project :id)
+          (plist-get project :title)
+          (plist-get project :summary)
+          (or (plist-get project :outputs) "")
+          (or (plist-get project :comments) "")))
+
+(defun agent--read-epoch-project-from-response
+    (response projects slack-url callback)
+  "Read a project from RESPONSE and call CALLBACK with SLACK-URL."
+  (let* ((ids (mapcar #'string-trim (split-string response "," t)))
+         (candidates (agent--ordered-epoch-project-candidates ids projects))
+         (labels (mapcar #'agent--epoch-project-label candidates))
+         (selected (completing-read "Project: " labels nil t nil nil
+                                    (car labels)))
+         (project (nth (cl-position selected labels :test #'string=)
+                       candidates)))
+    (funcall callback project slack-url)))
+
+(defun agent--ordered-epoch-project-candidates (ids projects)
+  "Return PROJECTS ordered by candidate IDS, with remaining projects appended."
+  (let ((matched (delq nil
+                       (mapcar (lambda (id)
+                                 (cl-find id projects :key
+                                          (lambda (project)
+                                            (plist-get project :id))
+                                          :test #'string=))
+                               ids))))
+    (append matched (cl-set-difference projects matched :test #'eq))))
+
+(defun agent--epoch-project-label (project)
+  "Return a completion label for PROJECT."
+  (format "%s - %s" (plist-get project :id) (plist-get project :title)))
+
+(defun agent-epoch-project-candidates ()
+  "Return canonical Epoch project candidates from the registry file."
+  (unless (file-exists-p agent-epoch-project-registry-file)
+    (user-error "Epoch project registry not found: %s"
+                agent-epoch-project-registry-file))
+  (with-temp-buffer
+    (insert-file-contents agent-epoch-project-registry-file)
+    (agent--epoch-projects-from-json (buffer-string))))
+
+(defun agent--epoch-projects-from-json (json)
+  "Return project plists parsed from registry JSON."
+  (let* ((data (json-parse-string json :object-type 'alist
+                                  :array-type 'list))
+         (projects (alist-get 'projects data)))
+    (mapcar #'agent--epoch-project-from-alist projects)))
+
+(defun agent--epoch-project-from-alist (project)
+  "Return an internal project plist from PROJECT alist."
+  (let ((notes (alist-get 'internal_notes project))
+        (source (alist-get 'source project)))
+    (list :id (alist-get 'id project)
+          :title (alist-get 'title project)
+          :summary (alist-get 'summary project)
+          :comments (alist-get 'comments notes)
+          :outputs (string-join
+                    (agent--json-list (alist-get 'output_destinations project))
+                    ", ")
+          :directory (agent--epoch-project-directory project source)
+          :repo (agent--json-string (alist-get 'local_repo_path project))
+          :doc (agent--json-string (alist-get 'project_doc_path project)))))
+
+(defun agent--epoch-project-directory (project source)
+  "Return the best local working directory for PROJECT and SOURCE."
+  (let ((repo (agent--epoch-project-path
+               (agent--json-string (alist-get 'local_repo_path project))))
+        (doc (agent--epoch-project-path
+              (or (agent--json-string (alist-get 'project_doc_path project))
+                  (agent--json-string (alist-get 'project_doc source))))))
+    (cond
+     ((and repo (file-directory-p repo)) repo)
+     (doc (file-name-directory doc))
+     (t agent-epoch-projects-root))))
+
+(defun agent--epoch-project-path (path)
+  "Return PATH expanded relative to `agent-epoch-projects-root'."
+  (when path
+    (expand-file-name path agent-epoch-projects-root)))
+
+(defun agent--json-string (value)
+  "Return VALUE when it is a string, otherwise nil."
+  (and (stringp value) value))
+
+(defun agent--json-list (value)
+  "Return VALUE when it is a list, otherwise nil."
+  (and (listp value) value))
 
 ;;;###autoload
 (defun agent-setup-kill-on-exit ()
@@ -1628,6 +1871,7 @@ Dispatches to the backend's `:restart' handler."
     ("c" "post-push CI" agent-post-push-ci)
     ("a" "audit project" agent-audit-project)
     ("d" "debug backtrace" agent-debug-backtrace)
+    ("m" "debug Slack message" agent-debug-slack-message)
     ""
     "Alerts"
     ("T" "toggle alert" agent-toggle-alert)]

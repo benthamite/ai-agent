@@ -58,6 +58,66 @@
     (should-error
      (agent-register-backend 'bad (list :buffer-p #'ignore)))))
 
+;;;; Epoch project registry
+
+(ert-deftest agent-test-epoch-projects-from-json-builds-directories ()
+  "Parse canonical project registry JSON into routing candidates."
+  (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
+         (repo (expand-file-name "digest/repo" root))
+         (agent-epoch-projects-root root))
+    (unwind-protect
+        (progn
+          (make-directory repo t)
+          (let* ((json (json-serialize
+                        `((projects . [((id . "ai-productivity-digest")
+                                         (title . "AI productivity digest")
+                                         (summary . "Daily Slack digest")
+                                         (local_repo_path . ,repo)
+                                         (project_doc_path
+                                          . "ai-productivity-digest/ai-productivity-digest.org")
+                                         (output_destinations
+                                          . ["#ai-productivity-digest"])
+                                         (internal_notes
+                                          . ((comments . "Posts to Slack")))
+                                         (source . nil))]))))
+                 (project (car (agent--epoch-projects-from-json json))))
+            (should (equal (plist-get project :id)
+                           "ai-productivity-digest"))
+            (should (equal (plist-get project :directory) repo))
+            (should (equal (plist-get project :outputs)
+                           "#ai-productivity-digest"))))
+      (delete-directory root t))))
+
+(ert-deftest agent-test-epoch-projects-from-json-handles-null-repo ()
+  "Use project docs when the canonical registry has a null repo path."
+  (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
+         (agent-epoch-projects-root root))
+    (unwind-protect
+        (let* ((json (json-serialize
+                      '((projects . [((id . "automation-progress")
+                                       (title . "Automation progress")
+                                       (summary . "Metrics")
+                                       (local_repo_path . :null)
+                                       (project_doc_path
+                                        . "automation-progress/automation-progress.org")
+                                       (output_destinations . [])
+                                       (internal_notes . nil)
+                                       (source . nil))]))))
+               (project (car (agent--epoch-projects-from-json json))))
+          (should (equal (plist-get project :directory)
+                         (expand-file-name "automation-progress/" root)))
+          (should-not (plist-get project :repo)))
+      (delete-directory root t))))
+
+(ert-deftest agent-test-ordered-epoch-project-candidates-puts-model-first ()
+  "Put model-selected project IDs before the remaining registry entries."
+  (let* ((a (list :id "a"))
+         (b (list :id "b"))
+         (c (list :id "c")))
+    (should (equal (agent--ordered-epoch-project-candidates
+                    '("c" "missing" "a") (list a b c))
+                   (list c a b)))))
+
 ;;;; Session keys and display names
 
 (ert-deftest agent-test-ensure-session-keys-assigns-home-row-keys ()

@@ -41,6 +41,8 @@ The package depends on =transient= for menus and =consult= for completion. The C
 #+vindex: agent-alert-sound
 #+vindex: agent-alert-sound-player
 #+vindex: agent-backtrace-file
+#+vindex: agent-epoch-project-registry-file
+#+vindex: agent-epoch-projects-root
 #+vindex: agent-prompt-capture-directory
 #+vindex: agent-prompt-capture-auto-save-delay
 #+vindex: agent-sync-theme
@@ -50,6 +52,8 @@ The user option ~agent-protect-buffers~ is a boolean that defaults to ~t~. When 
 The user option ~agent-alert-on-ready~ is a boolean that defaults to ~nil~. When enabled, backend notification handlers can call ~agent-notify~ to emit visual and/or audible alerts when a session is waiting for input. Codex's own terminal-bell notification path is routed through the same alert setting. ~agent-alert-style~ selects ~visual~, ~sound~, or ~both~; it defaults to ~both~. ~agent-alert-sound~ defaults to ~nil~; set it to a sound file to enable sound alerts. ~agent-alert-sound-player~ optionally names an external sound player when Emacs sound support is unavailable.
 
 The user option ~agent-backtrace-file~ controls where ~agent-save-backtrace~, ~agent-claude-debug-backtrace~, and ~agent-codex-debug-backtrace~ write Emacs backtraces. It defaults to a file in ~temporary-file-directory~.
+
+The user options ~agent-epoch-project-registry-file~ and ~agent-epoch-projects-root~ configure Slack-message project routing. The default registry is the generated =automations-dashboard/repo/data/automations.json= file, which is consumed by the Epoch automations dashboard and points back to the canonical project Org metadata.
 
 The user option ~agent-prompt-capture-directory~ controls where ~agent-capture-prompt~ stores per-session Org files. Each file is keyed by backend, account, project directory, and session instance, so prompts are linked to the session they target and remain available after Emacs restarts. ~agent-prompt-capture-auto-save-delay~ controls the idle delay before capture buffers are saved automatically.
 
@@ -88,6 +92,8 @@ Snippet helpers use =yasnippet= and =consult-yasnippet= only when those optional
 #+vindex: agent-claude-org-todo-in-progress-keyword
 #+vindex: agent-claude-debug-backtrace-model
 #+vindex: agent-claude-debug-backtrace-backend
+#+vindex: agent-claude-debug-slack-message-model
+#+vindex: agent-claude-debug-slack-message-backend
 The Claude backend options control account selection, session metadata, non-interactive execution, and branch workflows. ~agent-claude-accounts~ is an alist of account names to Claude configuration directories, and ~agent-claude-account-file~ stores the selected account across Emacs sessions. Use ~agent-claude-select-account~ or the account infix in ~agent-menu~ to switch accounts before starting a new session.
 
 Status and usage polling are controlled by integer intervals. ~agent-claude-status-interval~ defaults to =5= seconds and reads status JSON emitted by the bundled statusline script. ~agent-claude-usage-interval~ defaults to =300= seconds and backs off up to ~agent-claude-usage-max-interval~, which defaults to =900= seconds.
@@ -114,6 +120,8 @@ Claude hook setup is explicit. ~agent-claude-settings-file~ names the settings f
 #+vindex: agent-codex-exec-skip-git-repo-check
 #+vindex: agent-codex-debug-backtrace-model
 #+vindex: agent-codex-debug-backtrace-backend
+#+vindex: agent-codex-debug-slack-message-model
+#+vindex: agent-codex-debug-slack-message-backend
 The Codex backend options control account selection, handoff, skill discovery, non-interactive execution, project auditing, and backtrace debugging. ~agent-codex-accounts~ is an alist of account names to Codex home directories, and ~agent-codex-account-file~ stores the selected account across Emacs sessions. Account homes keep credentials such as =auth.json= separate, while shared Codex state such as =config.toml=, =hooks.json=, skills, sessions, and =history.jsonl= is symlinked from =~/.codex/= so hooks, skills, project trust, and chat history remain available after switching accounts. Use ~agent-codex-select-account~ or the Codex account infix in ~agent-menu~ to switch accounts before starting a new session. ~agent-codex-handoff-file~ defaults to a file in ~temporary-file-directory~ and is read by ~agent-codex-handoff~ after the Codex handoff skill writes next-session instructions.
 
 ~agent-codex-skill-directories~ is a list of additional directories scanned for Codex skills. The backend also scans standard Codex skill locations and project-local skill directories. ~agent-codex-audit-skills~ defaults to the code, design, and interpretability audit skills, while ~agent-codex-audit-project-directories~ stores completion candidates for the audit directory prompt.
@@ -121,6 +129,8 @@ The Codex backend options control account selection, handoff, skill discovery, n
 ~agent-codex-exec-approval-policy~, ~agent-codex-exec-sandbox-mode~, and ~agent-codex-exec-skip-git-repo-check~ configure the non-interactive Codex calls used by skill and audit workflows. The approval policy is passed as a top-level Codex CLI option before the =exec= subcommand, while the sandbox and repository-check options are passed to =codex exec= itself.
 
 ~agent-codex-debug-backtrace-model~ and ~agent-codex-debug-backtrace-backend~ configure the =gptel= request used by ~agent-codex-debug-backtrace~ to identify likely culprit packages from an Emacs backtrace.
+
+The Slack-message routing options, ~agent-claude-debug-slack-message-model~, ~agent-claude-debug-slack-message-backend~, ~agent-codex-debug-slack-message-model~, and ~agent-codex-debug-slack-message-backend~, configure the =gptel= request used to select an Epoch project from the Slack message at point.
 
 * Commands
 :PROPERTIES:
@@ -140,13 +150,14 @@ The Codex backend options control account selection, handoff, skill discovery, n
 #+findex: agent-handoff
 #+findex: agent-audit-project
 #+findex: agent-debug-backtrace
+#+findex: agent-debug-slack-message
 #+findex: agent-exit
 #+findex: agent-restart
 #+findex: agent-toggle-alert
 #+findex: agent-fix-rendering
 #+findex: agent-disable-scrollback-truncation
 #+findex: agent-snippet-tab
-The command ~agent-menu~ opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, alert toggles, terminal maintenance, and a separate Prompts section for prompt capture and captured prompt insertion. Backend modules append their own suffixes to the same menu when loaded.
+The command ~agent-menu~ opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, Slack-message routing, alert toggles, terminal maintenance, and a separate Prompts section for prompt capture and captured prompt insertion. Backend modules append their own suffixes to the same menu when loaded.
 
 The command ~agent-start-or-switch~ is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
 
@@ -159,7 +170,7 @@ selected backend with =--no-push --commit HEAD=. Use it after a push has
 already happened and you want an agent to inspect GitHub Actions failures, fix
 the root cause, and continue the authorized CI closeout loop.
 
-The commands ~agent-handoff~, ~agent-audit-project~, ~agent-debug-backtrace~, ~agent-exit~, and ~agent-restart~ resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
+The commands ~agent-handoff~, ~agent-audit-project~, ~agent-debug-backtrace~, ~agent-debug-slack-message~, ~agent-exit~, and ~agent-restart~ resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
 
 ~agent-before-exit-functions~ can delay ~agent-exit~ for cleanup work.
 Each function receives the resolved backend and session buffer; returning nil

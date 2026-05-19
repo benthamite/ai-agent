@@ -129,6 +129,16 @@ When nil, use `codex-sandbox-mode' or the CLI default."
   :type 'string
   :group 'agent-codex)
 
+(defcustom agent-codex-debug-slack-message-model 'gemini-flash-lite-latest
+  "GPtel model for selecting an Epoch project from a Slack message."
+  :type 'symbol
+  :group 'agent-codex)
+
+(defcustom agent-codex-debug-slack-message-backend "Gemini"
+  "GPtel backend name for Slack message project selection."
+  :type 'string
+  :group 'agent-codex)
+
 (defvar gptel-backend)
 (defvar gptel-model)
 (defvar gptel-use-tools)
@@ -200,6 +210,7 @@ Source: SVG Repo (CC0).")
         :run-skill #'agent-codex-run-skill
         :audit-project #'agent-codex-audit-project
         :debug-backtrace #'agent-codex-debug-backtrace
+        :debug-slack-message #'agent-codex-debug-slack-message
         :setup-kill-on-exit #'agent-codex-setup-kill-on-exit
         :exit #'agent-codex-exit
         :restart #'agent-codex-restart
@@ -993,6 +1004,30 @@ via `codex exec'."
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
     (message "Starting Codex for `%s' in %s..." package dir)
+    (agent-codex--install-hooks)
+    (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
+      (codex--start nil (list prompt) nil t))))
+
+;;;###autoload
+(defun agent-codex-debug-slack-message ()
+  "Select an Epoch project from a Slack message and open Codex."
+  (interactive)
+  (agent--debug-slack-message
+   agent-codex-debug-slack-message-model
+   agent-codex-debug-slack-message-backend
+   #'agent-codex--debug-slack-message-start-session))
+
+(defun agent-codex--debug-slack-message-start-session (project slack-url)
+  "Start a Codex session for PROJECT with SLACK-URL."
+  (let ((dir (plist-get project :directory))
+        (prompt (format (concat
+                         "Read the Slack message at %s. Identify the "
+                         "requested work, make the appropriate change for "
+                         "this project, verify it end to end, and commit "
+                         "the fix.")
+                        slack-url)))
+    (message "Starting Codex for `%s' in %s..."
+             (plist-get project :id) dir)
     (agent-codex--install-hooks)
     (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
       (codex--start nil (list prompt) nil t))))

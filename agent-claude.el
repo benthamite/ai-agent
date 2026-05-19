@@ -257,6 +257,7 @@ Source: lobehub/lobe-icons (MIT).")
         :run-skill #'agent-claude-run-skill
         :audit-project #'agent-claude-audit-project
         :debug-backtrace #'agent-claude-debug-backtrace
+        :debug-slack-message #'agent-claude-debug-slack-message
         :setup-kill-on-exit #'agent-claude-setup-kill-on-exit
         :exit #'agent-claude-exit
         :restart #'agent-claude-restart
@@ -2418,6 +2419,16 @@ unconditionally recenter with `(recenter -1)'."
   :type 'string
   :group 'agent-claude)
 
+(defcustom agent-claude-debug-slack-message-model 'gemini-flash-lite-latest
+  "GPtel model for selecting an Epoch project from a Slack message."
+  :type 'symbol
+  :group 'agent-claude)
+
+(defcustom agent-claude-debug-slack-message-backend "Gemini"
+  "GPtel backend name for Slack message project selection."
+  :type 'string
+  :group 'agent-claude)
+
 (defvar gptel-backend)
 (defvar gptel-model)
 (defvar gptel-use-tools)
@@ -2481,6 +2492,29 @@ there with the backtrace prompt passed as a CLI argument."
          (prompt (format "Read the backtrace at %s. Identify the bug, fix it, and commit the fix."
                          backtrace-file)))
     (message "Starting Claude Code for `%s' in %s..." package dir)
+    (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))
+      (claude-code--start nil (list prompt) nil t))))
+
+;;;###autoload
+(defun agent-claude-debug-slack-message ()
+  "Select an Epoch project from a Slack message and open Claude Code."
+  (interactive)
+  (agent--debug-slack-message
+   agent-claude-debug-slack-message-model
+   agent-claude-debug-slack-message-backend
+   #'agent-claude--debug-slack-message-start-session))
+
+(defun agent-claude--debug-slack-message-start-session (project slack-url)
+  "Start a Claude Code session for PROJECT with SLACK-URL."
+  (let ((dir (plist-get project :directory))
+        (prompt (format (concat
+                         "Read the Slack message at %s. Identify the "
+                         "requested work, make the appropriate change for "
+                         "this project, verify it end to end, and commit "
+                         "the fix.")
+                        slack-url)))
+    (message "Starting Claude Code for `%s' in %s..."
+             (plist-get project :id) dir)
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))
       (claude-code--start nil (list prompt) nil t))))
 
