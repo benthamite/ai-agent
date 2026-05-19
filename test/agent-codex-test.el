@@ -218,6 +218,36 @@
                    (list (list "$session-learning-capture"
                                expected-buffer))))))
 
+;;;; Slack message action routing
+
+(ert-deftest agent-codex-test-act-on-slack-message-inserts-url-for-review ()
+  "Start Codex without an initial prompt and insert the Slack URL."
+  (let ((project '(:id "project" :directory "/tmp/project"))
+        (url "https://example.slack.com/archives/C1/p123")
+        (buffer (generate-new-buffer " *codex-test*"))
+        started
+        sent)
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-codex--install-hooks) #'ignore)
+                  ((symbol-function 'codex--start)
+                   (lambda (arg extra-switches force-prompt force-switch-to-buffer)
+                     (setq started
+                           (list arg extra-switches force-prompt
+                                 force-switch-to-buffer
+                                 (codex--directory)))
+                     buffer))
+                  ((symbol-function 'agent-codex-send-command)
+                   (lambda (cmd target)
+                     (setq sent (list cmd target))
+                     target)))
+          (should (eq (agent-codex--act-on-slack-message-start-session
+                       project url)
+                      buffer))
+          (should (equal started
+                         (list nil nil nil t "/tmp/project")))
+          (should (equal sent (list url buffer))))
+      (kill-buffer buffer))))
+
 (ert-deftest agent-codex-test-before-exit-ready-vetoes-pending-prompt ()
   "Do not auto-close while Codex still has prompt input."
   (let ((buf (generate-new-buffer "*codex-test*")))

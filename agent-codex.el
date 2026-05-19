@@ -129,15 +129,25 @@ When nil, use `codex-sandbox-mode' or the CLI default."
   :type 'string
   :group 'agent-codex)
 
-(defcustom agent-codex-debug-slack-message-model 'gemini-flash-lite-latest
+(defcustom agent-codex-act-on-slack-message-model 'gemini-flash-lite-latest
   "GPtel model for selecting an Epoch project from a Slack message."
   :type 'symbol
   :group 'agent-codex)
 
-(defcustom agent-codex-debug-slack-message-backend "Gemini"
+(define-obsolete-variable-alias
+  'agent-codex-debug-slack-message-model
+  'agent-codex-act-on-slack-message-model
+  "0.2")
+
+(defcustom agent-codex-act-on-slack-message-backend "Gemini"
   "GPtel backend name for Slack message project selection."
   :type 'string
   :group 'agent-codex)
+
+(define-obsolete-variable-alias
+  'agent-codex-debug-slack-message-backend
+  'agent-codex-act-on-slack-message-backend
+  "0.2")
 
 (defvar gptel-backend)
 (defvar gptel-model)
@@ -210,7 +220,7 @@ Source: SVG Repo (CC0).")
         :run-skill #'agent-codex-run-skill
         :audit-project #'agent-codex-audit-project
         :debug-backtrace #'agent-codex-debug-backtrace
-        :debug-slack-message #'agent-codex-debug-slack-message
+        :act-on-slack-message #'agent-codex-act-on-slack-message
         :setup-kill-on-exit #'agent-codex-setup-kill-on-exit
         :exit #'agent-codex-exit
         :restart #'agent-codex-restart
@@ -1009,28 +1019,31 @@ via `codex exec'."
       (codex--start nil (list prompt) nil t))))
 
 ;;;###autoload
-(defun agent-codex-debug-slack-message ()
+(defun agent-codex-act-on-slack-message ()
   "Select an Epoch project from a Slack message and open Codex."
   (interactive)
-  (agent--debug-slack-message
-   agent-codex-debug-slack-message-model
-   agent-codex-debug-slack-message-backend
-   #'agent-codex--debug-slack-message-start-session))
+  (agent--act-on-slack-message
+   agent-codex-act-on-slack-message-model
+   agent-codex-act-on-slack-message-backend
+   #'agent-codex--act-on-slack-message-start-session))
 
-(defun agent-codex--debug-slack-message-start-session (project slack-url)
+(define-obsolete-function-alias
+  'agent-codex-debug-slack-message #'agent-codex-act-on-slack-message "0.2")
+
+(defun agent-codex--act-on-slack-message-start-session (project slack-url)
   "Start a Codex session for PROJECT with SLACK-URL."
-  (let ((dir (plist-get project :directory))
-        (prompt (format (concat
-                         "Read the Slack message at %s. Identify the "
-                         "requested work, make the appropriate change for "
-                         "this project, verify it end to end, and commit "
-                         "the fix.")
-                        slack-url)))
+  (let ((dir (plist-get project :directory)))
     (message "Starting Codex for `%s' in %s..."
              (plist-get project :id) dir)
     (agent-codex--install-hooks)
     (cl-letf (((symbol-function 'codex--directory) (lambda () dir)))
-      (codex--start nil (list prompt) nil t))))
+      (let ((buffer (codex--start nil nil nil t)))
+        (agent-codex-send-command slack-url buffer)))))
+
+(define-obsolete-function-alias
+  'agent-codex--debug-slack-message-start-session
+  #'agent-codex--act-on-slack-message-start-session
+  "0.2")
 
 ;;;;; Handoff
 

@@ -257,7 +257,7 @@ Source: lobehub/lobe-icons (MIT).")
         :run-skill #'agent-claude-run-skill
         :audit-project #'agent-claude-audit-project
         :debug-backtrace #'agent-claude-debug-backtrace
-        :debug-slack-message #'agent-claude-debug-slack-message
+        :act-on-slack-message #'agent-claude-act-on-slack-message
         :setup-kill-on-exit #'agent-claude-setup-kill-on-exit
         :exit #'agent-claude-exit
         :restart #'agent-claude-restart
@@ -2419,15 +2419,25 @@ unconditionally recenter with `(recenter -1)'."
   :type 'string
   :group 'agent-claude)
 
-(defcustom agent-claude-debug-slack-message-model 'gemini-flash-lite-latest
+(defcustom agent-claude-act-on-slack-message-model 'gemini-flash-lite-latest
   "GPtel model for selecting an Epoch project from a Slack message."
   :type 'symbol
   :group 'agent-claude)
 
-(defcustom agent-claude-debug-slack-message-backend "Gemini"
+(define-obsolete-variable-alias
+  'agent-claude-debug-slack-message-model
+  'agent-claude-act-on-slack-message-model
+  "0.2")
+
+(defcustom agent-claude-act-on-slack-message-backend "Gemini"
   "GPtel backend name for Slack message project selection."
   :type 'string
   :group 'agent-claude)
+
+(define-obsolete-variable-alias
+  'agent-claude-debug-slack-message-backend
+  'agent-claude-act-on-slack-message-backend
+  "0.2")
 
 (defvar gptel-backend)
 (defvar gptel-model)
@@ -2496,27 +2506,30 @@ there with the backtrace prompt passed as a CLI argument."
       (claude-code--start nil (list prompt) nil t))))
 
 ;;;###autoload
-(defun agent-claude-debug-slack-message ()
+(defun agent-claude-act-on-slack-message ()
   "Select an Epoch project from a Slack message and open Claude Code."
   (interactive)
-  (agent--debug-slack-message
-   agent-claude-debug-slack-message-model
-   agent-claude-debug-slack-message-backend
-   #'agent-claude--debug-slack-message-start-session))
+  (agent--act-on-slack-message
+   agent-claude-act-on-slack-message-model
+   agent-claude-act-on-slack-message-backend
+   #'agent-claude--act-on-slack-message-start-session))
 
-(defun agent-claude--debug-slack-message-start-session (project slack-url)
+(define-obsolete-function-alias
+  'agent-claude-debug-slack-message #'agent-claude-act-on-slack-message "0.2")
+
+(defun agent-claude--act-on-slack-message-start-session (project slack-url)
   "Start a Claude Code session for PROJECT with SLACK-URL."
-  (let ((dir (plist-get project :directory))
-        (prompt (format (concat
-                         "Read the Slack message at %s. Identify the "
-                         "requested work, make the appropriate change for "
-                         "this project, verify it end to end, and commit "
-                         "the fix.")
-                        slack-url)))
+  (let ((dir (plist-get project :directory)))
     (message "Starting Claude Code for `%s' in %s..."
              (plist-get project :id) dir)
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))
-      (claude-code--start nil (list prompt) nil t))))
+      (let ((buffer (claude-code--start nil nil nil t)))
+        (agent-claude-send-command slack-url buffer)))))
+
+(define-obsolete-function-alias
+  'agent-claude--debug-slack-message-start-session
+  #'agent-claude--act-on-slack-message-start-session
+  "0.2")
 
 (setq claude-code-notification-function #'claude-code-default-notification)
 (add-hook 'claude-code-event-hook #'agent-claude--handle-notification)

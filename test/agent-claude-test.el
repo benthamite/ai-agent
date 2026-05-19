@@ -31,6 +31,35 @@
                          (list (list buf "/session-retro")
                                (list buf (kbd "RET"))))))))))
 
+;;;; Slack message action routing
+
+(ert-deftest agent-claude-test-act-on-slack-message-inserts-url-for-review ()
+  "Start Claude Code without an initial prompt and insert the Slack URL."
+  (let ((project '(:id "project" :directory "/tmp/project"))
+        (url "https://example.slack.com/archives/C1/p123")
+        (buffer (generate-new-buffer " *claude-test*"))
+        started
+        sent)
+    (unwind-protect
+        (cl-letf (((symbol-function 'claude-code--start)
+                   (lambda (arg extra-switches force-prompt force-switch-to-buffer)
+                     (setq started
+                           (list arg extra-switches force-prompt
+                                 force-switch-to-buffer
+                                 (claude-code--directory)))
+                     buffer))
+                  ((symbol-function 'agent-claude-send-command)
+                   (lambda (cmd target)
+                     (setq sent (list cmd target))
+                     target)))
+          (should (eq (agent-claude--act-on-slack-message-start-session
+                       project url)
+                      buffer))
+          (should (equal started
+                         (list nil nil nil t "/tmp/project")))
+          (should (equal sent (list url buffer))))
+      (kill-buffer buffer))))
+
 ;;;; Session name extraction
 
 (ert-deftest agent-claude-test-session-name-standard ()

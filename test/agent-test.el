@@ -58,6 +58,19 @@
     (should-error
      (agent-register-backend 'bad (list :buffer-p #'ignore)))))
 
+(ert-deftest agent-test-act-on-slack-message-dispatches-new-backend-key ()
+  "Dispatch Slack-message action routing through the renamed backend key."
+  (let ((agent-backends nil)
+        (called nil))
+    (agent-register-backend
+     'one
+     (agent-test--backend
+      :act-on-slack-message (lambda ()
+                              (interactive)
+                              (setq called t))))
+    (agent-act-on-slack-message)
+    (should called)))
+
 ;;;; Epoch project registry
 
 (ert-deftest agent-test-epoch-projects-from-json-builds-directories ()

@@ -141,8 +141,8 @@ Snippet helpers use @samp{yasnippet} and @samp{consult-yasnippet} only when thos
 @vindex agent-claude-org-todo-in-progress-keyword
 @vindex agent-claude-debug-backtrace-model
 @vindex agent-claude-debug-backtrace-backend
-@vindex agent-claude-debug-slack-message-model
-@vindex agent-claude-debug-slack-message-backend
+@vindex agent-claude-act-on-slack-message-model
+@vindex agent-claude-act-on-slack-message-backend
 The Claude backend options control account selection, session metadata, non-interactive execution, and branch workflows. @code{agent-claude-accounts} is an alist of account names to Claude configuration directories, and @code{agent-claude-account-file} stores the selected account across Emacs sessions. Use @code{agent-claude-select-account} or the account infix in @code{agent-menu} to switch accounts before starting a new session.
 
 Status and usage polling are controlled by integer intervals. @code{agent-claude-status-interval} defaults to @samp{5} seconds and reads status JSON emitted by the bundled statusline script. @code{agent-claude-usage-interval} defaults to @samp{300} seconds and backs off up to @code{agent-claude-usage-max-interval}, which defaults to @samp{900} seconds.
@@ -167,8 +167,8 @@ Claude hook setup is explicit. @code{agent-claude-settings-file} names the setti
 @vindex agent-codex-exec-skip-git-repo-check
 @vindex agent-codex-debug-backtrace-model
 @vindex agent-codex-debug-backtrace-backend
-@vindex agent-codex-debug-slack-message-model
-@vindex agent-codex-debug-slack-message-backend
+@vindex agent-codex-act-on-slack-message-model
+@vindex agent-codex-act-on-slack-message-backend
 The Codex backend options control account selection, handoff, skill discovery, non-interactive execution, project auditing, and backtrace debugging. @code{agent-codex-accounts} is an alist of account names to Codex home directories, and @code{agent-codex-account-file} stores the selected account across Emacs sessions. Account homes keep credentials such as @samp{auth.json} separate, while shared Codex state such as @samp{config.toml}, @samp{hooks.json}, skills, sessions, and @samp{history.jsonl} is symlinked from @samp{~/.codex/} so hooks, skills, project trust, and chat history remain available after switching accounts. Use @code{agent-codex-select-account} or the Codex account infix in @code{agent-menu} to switch accounts before starting a new session. @code{agent-codex-handoff-file} defaults to a file in @code{temporary-file-directory} and is read by @code{agent-codex-handoff} after the Codex handoff skill writes next-session instructions.
 
 @code{agent-codex-skill-directories} is a list of additional directories scanned for Codex skills. The backend also scans standard Codex skill locations and project-local skill directories. @code{agent-codex-audit-skills} defaults to the code, design, and interpretability audit skills, while @code{agent-codex-audit-project-directories} stores completion candidates for the audit directory prompt.
@@ -177,7 +177,7 @@ The Codex backend options control account selection, handoff, skill discovery, n
 
 @code{agent-codex-debug-backtrace-model} and @code{agent-codex-debug-backtrace-backend} configure the @samp{gptel} request used by @code{agent-codex-debug-backtrace} to identify likely culprit packages from an Emacs backtrace.
 
-The Slack-message routing options, @code{agent-claude-debug-slack-message-model}, @code{agent-claude-debug-slack-message-backend}, @code{agent-codex-debug-slack-message-model}, and @code{agent-codex-debug-slack-message-backend}, configure the @samp{gptel} request used to select an Epoch project from the Slack message at point.
+The Slack-message routing options, @code{agent-claude-act-on-slack-message-model}, @code{agent-claude-act-on-slack-message-backend}, @code{agent-codex-act-on-slack-message-model}, and @code{agent-codex-act-on-slack-message-backend}, configure the @samp{gptel} request used to select an Epoch project from the Slack message at point.
 
 @node Commands
 @chapter Commands
@@ -199,14 +199,14 @@ The Slack-message routing options, @code{agent-claude-debug-slack-message-model}
 @findex agent-handoff
 @findex agent-audit-project
 @findex agent-debug-backtrace
-@findex agent-debug-slack-message
+@findex agent-act-on-slack-message
 @findex agent-exit
 @findex agent-restart
 @findex agent-toggle-alert
 @findex agent-fix-rendering
 @findex agent-disable-scrollback-truncation
 @findex agent-snippet-tab
-The command @code{agent-menu} opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, Slack-message routing, alert toggles, terminal maintenance, and a separate Prompts section for prompt capture and captured prompt insertion. Backend modules append their own suffixes to the same menu when loaded.
+The command @code{agent-menu} opens the unified transient menu. It includes shared entries for session switching, waiting-session jumps, handoff, restart, exit, skill execution, project audit, backtrace debugging, Slack-message action routing, alert toggles, terminal maintenance, and a separate Prompts section for prompt capture and captured prompt insertion. Backend modules append their own suffixes to the same menu when loaded.
 
 The command @code{agent-start-or-switch} is the main entry point. If no sessions exist, it starts a new session through the selected backend. If sessions already exist, it opens the session switcher. Sessions receive stable home-row keys where possible and display backend icons next to their labels.
 
@@ -219,7 +219,7 @@ selected backend with @samp{--no-push --commit HEAD}. Use it after a push has
 already happened and you want an agent to inspect GitHub Actions failures, fix
 the root cause, and continue the authorized CI closeout loop.
 
-The commands @code{agent-handoff}, @code{agent-audit-project}, @code{agent-debug-backtrace}, @code{agent-debug-slack-message}, @code{agent-exit}, and @code{agent-restart} resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
+The commands @code{agent-handoff}, @code{agent-audit-project}, @code{agent-debug-backtrace}, @code{agent-act-on-slack-message}, @code{agent-exit}, and @code{agent-restart} resolve a backend from the current session buffer or by prompting. This lets the same keybinding operate on Claude or Codex sessions without separate wrapper commands.
 
 @code{agent-before-exit-functions} can delay @code{agent-exit} for cleanup work.
 Each function receives the resolved backend and session buffer; returning nil

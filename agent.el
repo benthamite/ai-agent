@@ -131,7 +131,7 @@ Optional command keys for dispatching shared commands:
   :run-skill             function (name &optional args) (run a skill)
   :audit-project         function () (run audit skills on a project)
   :debug-backtrace       function () (analyze backtrace, start session)
-  :debug-slack-message   function () (route Slack message to project)
+  :act-on-slack-message  function () (route Slack message to project)
   :setup-kill-on-exit    function () (auto-kill buffer on process exit)
   :exit                  function () (exit session and kill buffer)
   :restart               function () (restart current session)
@@ -1557,10 +1557,14 @@ must support `:run-skill'."
   (agent--dispatch :debug-backtrace))
 
 ;;;###autoload
-(defun agent-debug-slack-message ()
+(defun agent-act-on-slack-message ()
   "Route the Slack message at point to an Epoch project session."
   (interactive)
-  (agent--dispatch :debug-slack-message))
+  (agent--dispatch :act-on-slack-message))
+
+;;;###autoload
+(define-obsolete-function-alias
+  'agent-debug-slack-message #'agent-act-on-slack-message "0.2")
 
 ;;;###autoload
 (defun agent-save-backtrace ()
@@ -1606,7 +1610,7 @@ must support `:run-skill'."
 (declare-function slack-request "slack-request")
 (declare-function slack-request-create "slack-request")
 
-(defun agent--debug-slack-message (model backend start-function)
+(defun agent--act-on-slack-message (model backend start-function)
   "Route the Slack message at point using MODEL, BACKEND, and START-FUNCTION.
 START-FUNCTION is called with the selected project plist and the
 Slack message URL."
@@ -1871,7 +1875,7 @@ Dispatches to the backend's `:restart' handler."
     ("c" "post-push CI" agent-post-push-ci)
     ("a" "audit project" agent-audit-project)
     ("d" "debug backtrace" agent-debug-backtrace)
-    ("m" "debug Slack message" agent-debug-slack-message)
+    ("m" "act on Slack message" agent-act-on-slack-message)
     ""
     "Alerts"
     ("T" "toggle alert" agent-toggle-alert)]
