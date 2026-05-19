@@ -73,8 +73,8 @@
 
 ;;;; Epoch project registry
 
-(ert-deftest agent-test-epoch-projects-from-json-builds-directories ()
-  "Parse canonical project registry JSON into routing candidates."
+(ert-deftest agent-test-epoch-projects-from-json-prefers-project-directory ()
+  "Prefer canonical project directories over nested local repos."
   (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
          (repo (expand-file-name "digest/repo" root))
          (agent-epoch-projects-root root))
@@ -96,9 +96,31 @@
                  (project (car (agent--epoch-projects-from-json json))))
             (should (equal (plist-get project :id)
                            "ai-productivity-digest"))
-            (should (equal (plist-get project :directory) repo))
+            (should (equal (plist-get project :directory)
+                           (expand-file-name "ai-productivity-digest/" root)))
             (should (equal (plist-get project :outputs)
                            "#ai-productivity-digest"))))
+      (delete-directory root t))))
+
+(ert-deftest agent-test-epoch-projects-from-json-falls-back-to-repo ()
+  "Use a local repo path when no canonical project doc is available."
+  (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
+         (repo (expand-file-name "digest/repo" root))
+         (agent-epoch-projects-root root))
+    (unwind-protect
+        (progn
+          (make-directory repo t)
+          (let* ((json (json-serialize
+                        `((projects . [((id . "ai-productivity-digest")
+                                         (title . "AI productivity digest")
+                                         (summary . "Daily Slack digest")
+                                         (local_repo_path . ,repo)
+                                         (project_doc_path . :null)
+                                         (output_destinations . [])
+                                         (internal_notes . nil)
+                                         (source . nil))]))))
+                 (project (car (agent--epoch-projects-from-json json))))
+            (should (equal (plist-get project :directory) repo))))
       (delete-directory root t))))
 
 (ert-deftest agent-test-epoch-projects-from-json-handles-null-repo ()

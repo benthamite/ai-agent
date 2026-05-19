@@ -1792,14 +1792,14 @@ called with the selected project plist and Slack URL."
 
 (defun agent--epoch-project-directory (project source)
   "Return the best local working directory for PROJECT and SOURCE."
-  (let ((repo (agent--epoch-project-path
-               (agent--json-string (alist-get 'local_repo_path project))))
-        (doc (agent--epoch-project-path
+  (let ((doc (agent--epoch-project-path
               (or (agent--json-string (alist-get 'project_doc_path project))
-                  (agent--json-string (alist-get 'project_doc source))))))
+                  (agent--json-string (alist-get 'project_doc source)))))
+        (repo (agent--epoch-project-path
+               (agent--json-string (alist-get 'local_repo_path project)))))
     (cond
-     ((and repo (file-directory-p repo)) repo)
      (doc (file-name-directory doc))
+     ((and repo (file-directory-p repo)) repo)
      (t agent-epoch-projects-root))))
 
 (defun agent--epoch-project-path (path)
