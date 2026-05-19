@@ -2519,7 +2519,9 @@ there with the backtrace prompt passed as a CLI argument."
 
 (defun agent-claude--act-on-slack-message-start-session (project slack-url)
   "Start a Claude Code session for PROJECT with SLACK-URL."
-  (let ((dir (plist-get project :directory)))
+  (let* ((dir (file-name-as-directory
+               (expand-file-name (plist-get project :directory))))
+         (default-directory dir))
     (message "Starting Claude Code for `%s' in %s..."
              (plist-get project :id) dir)
     (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir)))

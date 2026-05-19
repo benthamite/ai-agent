@@ -226,7 +226,8 @@
         (url "https://example.slack.com/archives/C1/p123")
         (buffer (generate-new-buffer " *codex-test*"))
         started
-        sent)
+        sent
+        launch-directory)
     (unwind-protect
         (cl-letf (((symbol-function 'agent-codex--install-hooks) #'ignore)
                   ((symbol-function 'codex--start)
@@ -235,6 +236,7 @@
                            (list arg extra-switches force-prompt
                                  force-switch-to-buffer
                                  (codex--directory)))
+                     (setq launch-directory default-directory)
                      buffer))
                   ((symbol-function 'agent-codex-send-command)
                    (lambda (cmd target)
@@ -244,7 +246,8 @@
                        project url)
                       buffer))
           (should (equal started
-                         (list nil nil nil t "/tmp/project")))
+                         (list nil nil nil t "/tmp/project/")))
+          (should (equal launch-directory "/tmp/project/"))
           (should (equal sent (list url buffer))))
       (kill-buffer buffer))))
 

@@ -1032,7 +1032,9 @@ via `codex exec'."
 
 (defun agent-codex--act-on-slack-message-start-session (project slack-url)
   "Start a Codex session for PROJECT with SLACK-URL."
-  (let ((dir (plist-get project :directory)))
+  (let* ((dir (file-name-as-directory
+               (expand-file-name (plist-get project :directory))))
+         (default-directory dir))
     (message "Starting Codex for `%s' in %s..."
              (plist-get project :id) dir)
     (agent-codex--install-hooks)
