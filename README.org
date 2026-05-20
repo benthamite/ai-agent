@@ -154,6 +154,8 @@ The optional =agent-chief= module runs a periodic, auditable chief-of-staff chec
 
 ~agent-chief-notify-function~ receives a title and message when the model decides that a nudge is warranted. The default function logs the message and uses =alert.el= when available. ~agent-chief-system-prompt~ is the standing instruction that makes the loop selective and forbids inventing obligations not present in the supplied context.
 
+Backend output may include echoed CLI transcript text before the answer. The chief loop scans that output and uses the last valid JSON object with a =notify= field as the decision, so echoed response-schema examples do not confuse the parser.
+
 * Commands
 :PROPERTIES:
 :CUSTOM_ID: h:commands

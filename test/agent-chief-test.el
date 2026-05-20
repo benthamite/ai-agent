@@ -9,9 +9,29 @@
 (ert-deftest agent-chief-test-extract-json-from-fenced-output ()
   "Extract a JSON object from fenced model output."
   (should
-   (equal (agent-chief--extract-json
+   (equal (agent-chief--extract-decision-json
            "```json\n{\"notify\":false,\"message\":\"\"}\n```")
           "{\"notify\":false,\"message\":\"\"}")))
+
+(ert-deftest agent-chief-test-extract-json-skips-echoed-schema ()
+  "Skip invalid JSON-like objects before the model's decision."
+  (should
+   (equal
+    (agent-chief--extract-decision-json
+     (concat
+      "Return {\"notify\":true|false,\"message\":\"shape\"}\n"
+      "codex\n"
+      "{\"notify\":true,\"title\":\"Focus\",\"message\":\"Go\",\"state_update\":\"\"}\n"
+      "tokens used\n16,134"))
+    "{\"notify\":true,\"title\":\"Focus\",\"message\":\"Go\",\"state_update\":\"\"}")))
+
+(ert-deftest agent-chief-test-extract-json-respects-braces-in-strings ()
+  "Do not treat braces inside JSON strings as object delimiters."
+  (should
+   (equal
+    (agent-chief--extract-decision-json
+     "{\"notify\":false,\"message\":\"literal { brace }\"}")
+    "{\"notify\":false,\"message\":\"literal { brace }\"}")))
 
 (ert-deftest agent-chief-test-parse-decision-requires-notify ()
   "Reject decisions without a notify field."

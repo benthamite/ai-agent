@@ -292,21 +292,66 @@ seconds before the first tick."
 
 (defun agent-chief--parse-decision (text)
   "Parse a JSON decision object from TEXT."
-  (let* ((json-object (agent-chief--extract-json text))
+  (let* ((json-object (agent-chief--extract-decision-json text))
          (decision (json-parse-string json-object :object-type 'plist)))
     (unless (plist-member decision :notify)
       (error "Missing notify field"))
     decision))
 
-(defun agent-chief--extract-json (text)
-  "Extract the first JSON object from TEXT."
+(defun agent-chief--extract-decision-json (text)
+  "Extract the last valid decision JSON object from TEXT."
   (unless (stringp text)
     (error "Backend returned no text"))
-  (let ((start (string-match-p "{" text))
-        (end (cl-position ?} text :from-end t)))
-    (unless (and start end (< start end))
-      (error "No JSON object found"))
-    (substring text start (1+ end))))
+  (or (car (last (agent-chief--valid-decision-json-objects text)))
+      (error "No valid decision JSON object found")))
+
+(defun agent-chief--valid-decision-json-objects (text)
+  "Return valid decision JSON object strings found in TEXT."
+  (let ((objects nil)
+        (pos 0))
+    (while (setq pos (string-match-p "{" text pos))
+      (when-let* ((object (agent-chief--balanced-json-object text pos)))
+        (when (agent-chief--decision-json-p object)
+          (push object objects)))
+      (setq pos (1+ pos)))
+    (nreverse objects)))
+
+(defun agent-chief--balanced-json-object (text start)
+  "Return the balanced JSON object in TEXT starting at START."
+  (let ((pos start)
+        (depth 0)
+        (in-string nil)
+        (escape nil)
+        (done nil))
+    (while (and (< pos (length text)) (not done))
+      (let ((char (aref text pos)))
+        (cond
+         (escape
+          (setq escape nil))
+         ((and in-string (= char ?\\))
+          (setq escape t))
+         ((= char ?\")
+          (setq in-string (not in-string)))
+         ((not in-string)
+          (cond
+           ((= char ?{)
+            (setq depth (1+ depth)))
+           ((= char ?})
+            (setq depth (1- depth))
+            (when (zerop depth)
+              (setq done t)))))))
+      (setq pos (1+ pos)))
+    (when done
+      (substring text start pos))))
+
+(defun agent-chief--decision-json-p (object)
+  "Return non-nil when OBJECT parses as a chief decision."
+  (condition-case nil
+      (let ((decision (json-parse-string object :object-type 'plist)))
+        (plist-member decision :notify))
+    (error nil)))
+
+(defalias 'agent-chief--extract-json #'agent-chief--extract-decision-json)
 
 (defun agent-chief--truthy-p (value)
   "Return non-nil when VALUE is a JSON truthy value."
