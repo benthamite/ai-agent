@@ -17,9 +17,9 @@ This manual describes the features and customization options for the Emacs Lisp 
 :CUSTOM_ID: h:overview
 :END:
 
-=agent.el= collects the Emacs integration layer for AI coding command-line tools. It provides a shared session model, a unified transient menu, notification handling, terminal helpers, and backend modules for Claude Code and Codex.
+=agent.el= collects the Emacs integration layer for AI coding command-line tools. It provides a shared session model, a unified transient menu, notification handling, terminal helpers, backend modules for Claude Code and Codex, and an optional chief-of-staff loop.
 
-The package is split into a small core and backend modules. The core file, =agent.el=, is backend-agnostic: it knows how to register AI tools, find their buffers, dispatch shared commands, render backend icons, assign stable session keys, and present a single menu. =agent-claude.el= integrates =claude-code.el= with Claude-specific account switching, status polling, usage polling, branch navigation, batch TODO processing, and hook setup. =agent-codex.el= integrates =codex.el= with Codex-specific theme sync, skill execution, handoff, auditing, debugging, and modeline helpers.
+The package is split into a small core and backend modules. The core file, =agent.el=, is backend-agnostic: it knows how to register AI tools, find their buffers, dispatch shared commands, render backend icons, assign stable session keys, and present a single menu. =agent-claude.el= integrates =claude-code.el= with Claude-specific account switching, status polling, usage polling, branch navigation, batch TODO processing, and hook setup. =agent-codex.el= integrates =codex.el= with Codex-specific theme sync, skill execution, handoff, auditing, debugging, and modeline helpers. =agent-chief.el= implements an inspectable chief-of-staff loop: Emacs owns timers, state, context collection, and notifications, while Claude Code or Codex provides one-shot judgment on each tick.
 
 The main workflow is to load =agent.el=, then require the backend modules you use. Once the Claude and Codex modules are loaded, =M-x agent-menu= and =M-x agent-start-or-switch= operate across both tools. Sessions are grouped by account when the backend exposes account metadata, highlighted when waiting for input, and disambiguated by project and instance name when several sessions share a directory.
 
@@ -132,6 +132,28 @@ The Codex backend options control account selection, handoff, skill discovery, n
 
 The Slack-message routing options, ~agent-claude-act-on-slack-message-model~, ~agent-claude-act-on-slack-message-backend~, ~agent-codex-act-on-slack-message-model~, and ~agent-codex-act-on-slack-message-backend~, configure the =gptel= request used to select an Epoch project from the Slack message at point. The selected backend starts in that project's canonical directory from the project document path, not a nested repo, and inserts the Slack URL into the prompt without submitting it, so the prompt can be reviewed first.
 
+** Chief-of-staff loop
+:PROPERTIES:
+:CUSTOM_ID: h:chief-options
+:END:
+
+#+vindex: agent-chief-backend
+#+vindex: agent-chief-interval
+#+vindex: agent-chief-directory
+#+vindex: agent-chief-state-file
+#+vindex: agent-chief-context-functions
+#+vindex: agent-chief-state-max-chars
+#+vindex: agent-chief-max-turns
+#+vindex: agent-chief-notify-function
+#+vindex: agent-chief-system-prompt
+The optional =agent-chief= module runs a periodic, auditable chief-of-staff check. Emacs owns the schedule and state; the selected backend only receives a bounded prompt and returns a JSON decision saying whether to notify the user now.
+
+~agent-chief-backend~ selects =codex= or =claude-code=. ~agent-chief-interval~ controls the timer interval in seconds. ~agent-chief-directory~ is the working directory for the non-interactive backend call. ~agent-chief-state-file~ is an Org file used as the durable, inspectable state store; =agent-chief= never writes opaque memory.
+
+~agent-chief-context-functions~ is the extension point for agenda, task, calendar, project, or custom status snippets. Each function is called with no arguments and should return a string. Nil and empty strings are ignored. The state file is included separately, truncated to ~agent-chief-state-max-chars~ characters. ~agent-chief-max-turns~ limits Claude Code ticks; Codex ticks use the existing =codex exec= settings from =agent-codex=.
+
+~agent-chief-notify-function~ receives a title and message when the model decides that a nudge is warranted. The default function logs the message and uses =alert.el= when available. ~agent-chief-system-prompt~ is the standing instruction that makes the loop selective and forbids inventing obligations not present in the supplied context.
+
 * Commands
 :PROPERTIES:
 :CUSTOM_ID: h:commands
@@ -202,6 +224,21 @@ Backends can provide an atomic submit operation for before-exit commands.
 Claude and Codex both target the resolved session buffer directly, insert the
 skill command, and submit it once before the terminal buffer is displayed
 again. Codex delegates this to =codex.el='s target-buffer submit helper.
+
+** Chief-of-staff commands
+:PROPERTIES:
+:CUSTOM_ID: h:chief-commands
+:END:
+
+#+findex: agent-chief-start
+#+findex: agent-chief-stop
+#+findex: agent-chief-tick
+#+findex: agent-chief-open-state
+#+findex: agent-chief-add-note
+#+findex: agent-chief-set-day-plan
+The command ~agent-chief-start~ starts a repeating Emacs timer. Without a prefix argument it also schedules an immediate tick; with a prefix argument, it waits ~agent-chief-interval~ seconds before the first tick. ~agent-chief-stop~ cancels the timer, and ~agent-chief-tick~ runs one check manually.
+
+The command ~agent-chief-open-state~ opens the auditable Org state file. ~agent-chief-add-note~ appends a manual note, and ~agent-chief-set-day-plan~ appends today's plan. These commands are intentionally simple: the durable source of truth remains ordinary text that can be reviewed, edited, and audited outside the model.
 
 ** Claude Code commands
 :PROPERTIES:
