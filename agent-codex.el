@@ -40,11 +40,25 @@
   "Extensions for `codex'."
   :group 'codex)
 
-(defcustom agent-codex-handoff-file
+(defconst agent-codex--handoff-file-default
+  (expand-file-name "codex-handoff.md" "/tmp/")
+  "Default path used by the Codex `/handoff' skill.")
+
+(defconst agent-codex--legacy-handoff-file-default
   (expand-file-name "codex-handoff.md" temporary-file-directory)
+  "Previous default path for `agent-codex-handoff-file'.")
+
+(defcustom agent-codex-handoff-file
+  agent-codex--handoff-file-default
   "Path to the handoff file written by the handoff skill."
   :type 'file
   :group 'agent-codex)
+
+(when (and (equal agent-codex-handoff-file
+                  agent-codex--legacy-handoff-file-default)
+           (not (get 'agent-codex-handoff-file 'saved-value))
+           (not (get 'agent-codex-handoff-file 'customized-value)))
+  (setq agent-codex-handoff-file agent-codex--handoff-file-default))
 
 (defcustom agent-codex-accounts nil
   "Alist of account names to Codex home directories.

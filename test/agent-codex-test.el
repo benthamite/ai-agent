@@ -10,6 +10,10 @@
 
 ;;;; Account selection
 
+(ert-deftest agent-codex-test-handoff-file-default-matches-skill ()
+  "Use the path written by the Codex `/handoff' skill."
+  (should (equal agent-codex-handoff-file "/tmp/codex-handoff.md")))
+
 (ert-deftest agent-codex-test-account-env-uses-pending-account ()
   "Set CODEX_HOME from the dynamically bound pending account."
   (let* ((dir (make-temp-file "codex-account" t))
