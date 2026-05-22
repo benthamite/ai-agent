@@ -325,6 +325,82 @@
          '(:context_window (:used_percentage 50))))
     (should-not (agent-claude-status-cache-total-tokens))))
 
+;;;; Usage polling
+
+(defvar url-http-attempt-keepalives)
+
+(ert-deftest agent-claude-test-fetch-usage-retries-stale-url-process ()
+  "Retry once when `url-retrieve' signals a stale process write error."
+  (let ((proc (make-pipe-process :name "agent-usage-test" :noquery t))
+        calls
+        deleted
+        backed-off)
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-claude--get-oauth-token)
+                   (lambda (_account) "token"))
+                  ((symbol-function 'delete-process)
+                   (lambda (process)
+                     (setq deleted process)))
+                  ((symbol-function 'agent-claude--usage-backoff)
+                   (lambda ()
+                     (setq backed-off t)))
+                  ((symbol-function 'url-retrieve)
+                   (lambda (&rest args)
+                     (push args calls)
+                     (if (= (length calls) 1)
+                         (signal 'file-error
+                                 (list "Writing to process"
+                                       "Invalid argument"
+                                       proc))
+                       :retrieved))))
+          (should (eq (agent-claude--fetch-usage-for-account "personal")
+                      :retrieved))
+          (should (= (length calls) 2))
+          (should (eq deleted proc))
+          (should-not backed-off))
+      (when (process-live-p proc)
+        (delete-process proc)))))
+
+(ert-deftest agent-claude-test-fetch-usage-backs-off-after-retry-fails ()
+  "Back off instead of signaling when retrying a usage poll also fails."
+  (let ((proc (make-pipe-process :name "agent-usage-test" :noquery t))
+        (calls 0)
+        backed-off)
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-claude--get-oauth-token)
+                   (lambda (_account) "token"))
+                  ((symbol-function 'agent-claude--usage-backoff)
+                   (lambda ()
+                     (setq backed-off t)
+                     :backoff))
+                  ((symbol-function 'url-retrieve)
+                   (lambda (&rest _args)
+                     (setq calls (1+ calls))
+                     (signal 'file-error
+                             (list "Writing to process"
+                                   "Invalid argument"
+                                   proc)))))
+          (should (eq (agent-claude--fetch-usage-for-account "personal")
+                      :backoff))
+          (should (= calls 2))
+          (should backed-off))
+      (when (process-live-p proc)
+        (delete-process proc)))))
+
+(ert-deftest agent-claude-test-fetch-usage-disables-url-keepalives ()
+  "Do not keep idle URL connections open for periodic usage polling."
+  (let ((url-http-attempt-keepalives t)
+        observed)
+    (cl-letf (((symbol-function 'agent-claude--get-oauth-token)
+               (lambda (_account) "token"))
+              ((symbol-function 'url-retrieve)
+               (lambda (&rest _args)
+                 (setq observed url-http-attempt-keepalives)
+                 :retrieved)))
+      (should (eq (agent-claude--fetch-usage-for-account "personal")
+                  :retrieved))
+      (should-not observed))))
+
 ;;;; Alert indicator
 
 (ert-deftest agent-claude-test-alert-indicator-active ()

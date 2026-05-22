@@ -203,6 +203,7 @@ Used to detect when `/branch' creates a new session.")
 
 (defvar eat-terminal)
 (defvar url-http-end-of-headers)
+(defvar url-http-attempt-keepalives)
 (defvar url-request-method)
 (defvar url-request-extra-headers)
 (declare-function agent-svg-icon "agent" (svg-data &optional face))
@@ -950,14 +951,59 @@ Reads the OAuth token from the macOS Keychain and queries the
 undocumented `api/oauth/usage' endpoint.  Stores the parsed
 response in `agent-claude--usage-data' keyed by ACCOUNT."
   (when-let* ((token (agent-claude--get-oauth-token account)))
-    (let ((url-request-method "GET")
-          (url-request-extra-headers
-           `(("Authorization" . ,(concat "Bearer " token))
-             ("anthropic-beta" . "oauth-2025-04-20"))))
-      (url-retrieve
-       "https://api.anthropic.com/api/oauth/usage"
-       #'agent-claude--handle-usage-response
-       (list account) t t))))
+    (agent-claude--fetch-usage-with-token account token t)))
+
+(defun agent-claude--fetch-usage-with-token (account token retry)
+  "Fetch usage data for ACCOUNT with TOKEN.
+If RETRY is non-nil, retry stale URL process write failures once."
+  (condition-case err
+      (agent-claude--url-retrieve-usage account token)
+    (file-error
+     (agent-claude--handle-usage-retrieve-error account token err retry))))
+
+(defun agent-claude--url-retrieve-usage (account token)
+  "Start the async usage request for ACCOUNT with TOKEN."
+  (let ((url-http-attempt-keepalives nil)
+        (url-request-method "GET")
+        (url-request-extra-headers
+         `(("Authorization" . ,(concat "Bearer " token))
+           ("anthropic-beta" . "oauth-2025-04-20"))))
+    (url-retrieve
+     "https://api.anthropic.com/api/oauth/usage"
+     #'agent-claude--handle-usage-response
+     (list account) t t)))
+
+(defun agent-claude--handle-usage-retrieve-error (account token err retry)
+  "Handle synchronous usage request error ERR for ACCOUNT.
+TOKEN is reused only when RETRY allows a stale-process retry."
+  (agent-claude--delete-error-process err)
+  (if (and retry (agent-claude--url-process-write-error-p err))
+      (agent-claude--fetch-usage-with-token account token nil)
+    (message "agent-claude usage poll failed for %s: %s"
+             (or account "default")
+             (error-message-string err))
+    (agent-claude--usage-backoff)))
+
+(defun agent-claude--url-process-write-error-p (err)
+  "Return non-nil if ERR is a URL process write failure."
+  (and (eq (car-safe err) 'file-error)
+       (member "Writing to process" (cdr err))
+       (agent-claude--error-process err)))
+
+(defun agent-claude--delete-error-process (err)
+  "Delete the process recorded in ERR, if any."
+  (when-let* ((process (agent-claude--error-process err)))
+    (delete-process process)))
+
+(defun agent-claude--error-process (err)
+  "Return the first process object recorded in ERR."
+  (let ((items (cdr-safe err))
+        process)
+    (while (and items (not process))
+      (when (processp (car items))
+        (setq process (car items)))
+      (setq items (cdr items)))
+    process))
 
 (defun agent-claude--handle-usage-response (status account)
   "Handle the async usage API response for ACCOUNT.
