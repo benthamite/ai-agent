@@ -246,7 +246,7 @@ again. Codex delegates this to =codex.el='s target-buffer submit helper.
 #+findex: agent-chief-open-state
 #+findex: agent-chief-add-note
 #+findex: agent-chief-set-day-plan
-The command ~agent-chief-start-session~ starts or reuses a dedicated Claude Code or Codex session using ~agent-chief-session-instance-name~, optionally records a day plan, sends the chief-of-staff operating contract into the session, and starts the heartbeat timer. The command ~agent-chief-switch-to-session~ jumps back to that session so the user can reply normally.
+The command ~agent-chief-start-session~ starts or reuses a dedicated Claude Code or Codex session using ~agent-chief-session-instance-name~, sends the chief-of-staff operating contract into the session, asks the model to request today's plan there, and starts the heartbeat timer. The command ~agent-chief-switch-to-session~ jumps back to that session so the user can reply normally.
 
 The command ~agent-chief-start~ starts only the repeating Emacs timer. Without a prefix argument it also schedules an immediate tick; with a prefix argument, it waits ~agent-chief-interval~ seconds before the first tick. ~agent-chief-stop~ cancels the timer. ~agent-chief-tick~ runs one check using ~agent-chief-mode~. ~agent-chief-session-heartbeat~ forces a session-mode heartbeat, while ~agent-chief-stateless-tick~ forces one stateless JSON-decision check.
 

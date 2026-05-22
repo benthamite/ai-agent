@@ -172,19 +172,15 @@ seconds before the first tick."
   (message "Agent chief started; interval %ss" agent-chief-interval))
 
 ;;;###autoload
-(defun agent-chief-start-session (&optional plan)
+(defun agent-chief-start-session ()
   "Start or reuse the interactive chief-of-staff session.
-When PLAN is nonempty, record it as today's plan and submit it to
-the session.  Interactively, prompt for PLAN."
-  (interactive
-   (list (let ((value (read-string "Day plan (empty to skip): ")))
-           (unless (string-empty-p (string-trim value)) value))))
+The session itself asks for today's plan so the user can reply
+conversationally in the agent buffer."
+  (interactive)
   (let ((buffer (agent-chief--ensure-session)))
     (agent-chief--submit-to-session
      (agent-chief--session-introduction)
      buffer)
-    (when plan
-      (agent-chief-set-day-plan plan))
     (agent-chief-start t)
     (pop-to-buffer buffer)))
 
@@ -381,6 +377,8 @@ the session.  Interactively, prompt for PLAN."
    (delq nil
          (list agent-chief-system-prompt
                "This is your dedicated long-lived chief-of-staff session. Pablo may reply here normally during the day."
+               "Ask Pablo for today's plan now. After he replies, briefly restate the plan and say that you will use it for future heartbeat checks."
+               "If Pablo gives you a revised plan later, accept it conversationally. Durable plan updates should also be recorded via `agent-chief-set-day-plan` when he wants the explicit Org state updated."
                "On heartbeat prompts, respond exactly `CHIEF_NO_NUDGE` when no nudge is warranted. Otherwise respond with `CHIEF_NUDGE: ` followed by one concise message."
                (agent-chief--time-context)
                (agent-chief--state-context)

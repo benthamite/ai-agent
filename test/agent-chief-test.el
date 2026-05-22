@@ -126,6 +126,46 @@
       (when (buffer-live-p started-buffer)
         (kill-buffer started-buffer)))))
 
+(ert-deftest agent-chief-test-start-session-asks-for-plan-in-session ()
+  "Start the chief session without prompting in the minibuffer."
+  (let ((agent-backends nil)
+        (agent-chief-backend 'codex)
+        (agent-chief-directory "/tmp/")
+        (agent-chief-session-buffer nil)
+        (agent-chief--timer nil)
+        started-buffer
+        submitted
+        minibuffer-prompted)
+    (unwind-protect
+        (progn
+          (agent-register-backend
+           'codex
+           (agent-chief-test--backend
+            :find-buffers-for-dir (lambda (_dir)
+                                    (and started-buffer
+                                         (list started-buffer)))
+            :extract-instance-name (lambda (_name) "chief")
+            :start (lambda (&rest _args)
+                     (setq started-buffer
+                           (get-buffer-create "*codex:/tmp/:chief*")))
+            :submit-command (lambda (prompt buffer)
+                              (push (list prompt buffer) submitted))))
+          (cl-letf (((symbol-function 'require) #'ignore)
+                    ((symbol-function 'read-string)
+                     (lambda (&rest _args)
+                       (setq minibuffer-prompted t)
+                       "should not happen"))
+                    ((symbol-function 'run-at-time)
+                     (lambda (&rest _args) 'timer))
+                    ((symbol-function 'pop-to-buffer) #'ignore))
+            (agent-chief-start-session))
+          (should-not minibuffer-prompted)
+          (should (equal (cadar submitted) started-buffer))
+          (should (string-match-p "Ask Pablo for today's plan"
+                                  (caar submitted))))
+      (when (buffer-live-p started-buffer)
+        (kill-buffer started-buffer)))))
+
 (ert-deftest agent-chief-test-set-day-plan-forwards-to-session ()
   "Record the day plan and submit it to the live chief session."
   (let ((agent-backends nil)
