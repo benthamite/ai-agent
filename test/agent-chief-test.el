@@ -96,6 +96,12 @@
       (should (string-match-p "Calendar: write block at 10" prompt))
       (should (string-match-p "state file is empty or missing" prompt)))))
 
+(ert-deftest agent-chief-test-directory-prefers-epoch-when-present ()
+  "Default chief sessions should not start in the Emacs profile."
+  (when (file-directory-p "/Users/pablostafforini/My Drive/Epoch/")
+    (should (equal (file-name-as-directory agent-chief-directory)
+                   "/Users/pablostafforini/My Drive/Epoch/"))))
+
 (ert-deftest agent-chief-test-normalizes-legacy-json-system-prompt ()
   "Replace the old JSON-only prompt when building current prompts."
   (let ((agent-chief-system-prompt agent-chief--legacy-json-system-prompt)

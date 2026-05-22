@@ -73,7 +73,11 @@ call and parses a JSON decision."
   :type 'integer
   :group 'agent-chief)
 
-(defcustom agent-chief-directory user-emacs-directory
+(defcustom agent-chief-directory
+  (let ((epoch-directory "/Users/pablostafforini/My Drive/Epoch/"))
+    (if (file-directory-p epoch-directory)
+        epoch-directory
+      user-emacs-directory))
   "Working directory used for chief-of-staff agent sessions."
   :type 'directory
   :group 'agent-chief)
