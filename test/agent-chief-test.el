@@ -173,6 +173,7 @@
         (agent-chief-directory "/tmp/")
         (agent-chief-session-buffer nil)
         (agent-chief--timer nil)
+        (agent-chief--running t)
         started-buffer
         submitted
         minibuffer-prompted)
@@ -200,6 +201,7 @@
                     ((symbol-function 'pop-to-buffer) #'ignore))
             (agent-chief-start-session))
           (should-not minibuffer-prompted)
+          (should-not agent-chief--running)
           (should (equal (cadar submitted) started-buffer))
           (should (string-match-p "Ask me for today's plan"
                                   (caar submitted)))
@@ -348,6 +350,30 @@
                      (list agent-chief-interval
                            agent-chief-interval
                            #'agent-chief-tick))))))
+
+(ert-deftest agent-chief-test-stop-clears-running-heartbeat-state ()
+  "Stopping the chief loop clears stale running and heartbeat state."
+  (let ((agent-chief--timer 'old)
+        (agent-chief--running t)
+        (agent-chief-session-buffer (get-buffer-create "*chief-test*"))
+        cancelled)
+    (unwind-protect
+        (progn
+          (with-current-buffer agent-chief-session-buffer
+            (setq-local agent-chief--session-awaiting-heartbeat t)
+            (setq agent-chief--session-start-marker (copy-marker (point-min))))
+          (cl-letf (((symbol-function 'timerp) (lambda (value) (eq value 'old)))
+                    ((symbol-function 'cancel-timer)
+                     (lambda (timer) (setq cancelled timer))))
+            (agent-chief-stop))
+          (should (eq cancelled 'old))
+          (should-not agent-chief--timer)
+          (should-not agent-chief--running)
+          (with-current-buffer agent-chief-session-buffer
+            (should-not agent-chief--session-awaiting-heartbeat)
+            (should-not agent-chief--session-start-marker)))
+      (when (buffer-live-p agent-chief-session-buffer)
+        (kill-buffer agent-chief-session-buffer)))))
 
 (provide 'agent-chief-test)
 ;;; agent-chief-test.el ends here

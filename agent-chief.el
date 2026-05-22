@@ -200,6 +200,7 @@ The session itself asks for today's plan so the user can reply
 conversationally in the agent buffer."
   (interactive)
   (let ((buffer (agent-chief--ensure-session)))
+    (agent-chief--clear-session-heartbeat-state buffer)
     (agent-chief--submit-to-session
      (agent-chief--session-introduction)
      buffer)
@@ -213,6 +214,9 @@ conversationally in the agent buffer."
   (when (timerp agent-chief--timer)
     (cancel-timer agent-chief--timer))
   (setq agent-chief--timer nil)
+  (setq agent-chief--running nil)
+  (when-let* ((buffer (agent-chief--session-buffer)))
+    (agent-chief--clear-session-heartbeat-state buffer))
   (message "Agent chief stopped"))
 
 ;;;###autoload
@@ -300,6 +304,14 @@ conversationally in the agent buffer."
   "Return the live chief-of-staff session buffer, or nil."
   (when (buffer-live-p agent-chief-session-buffer)
     agent-chief-session-buffer))
+
+(defun agent-chief--clear-session-heartbeat-state (&optional buffer)
+  "Clear pending heartbeat state for BUFFER and the global running flag."
+  (setq agent-chief--running nil)
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq agent-chief--session-awaiting-heartbeat nil)
+      (setq agent-chief--session-start-marker nil))))
 
 (defun agent-chief--start-session-buffer ()
   "Start and return a chief-of-staff session buffer."
