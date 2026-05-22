@@ -123,13 +123,26 @@ enter the state file through `agent-chief-set-day-plan' and
   :type 'boolean
   :group 'agent-chief)
 
-(defcustom agent-chief-system-prompt
+(defconst agent-chief--legacy-json-system-prompt
+  (concat
+   "You are Pablo's chief-of-staff agent. Your job is to decide whether "
+   "to contact him now based only on the supplied auditable context. Be "
+   "selective: contact him only when a timely nudge would help him stay "
+   "on track, avoid missing a commitment, or recover from drift. Never "
+   "invent obligations. Never claim to have checked a source that was not "
+   "included in the prompt. Return exactly one JSON object and no prose.")
+  "Old default prompt that incorrectly leaked the stateless JSON contract.")
+
+(defconst agent-chief--default-system-prompt
   (concat
    "You are Pablo's chief-of-staff agent. Your job is to help him follow "
    "the plan he deliberately gives you. Be selective: contact him only "
    "when a timely nudge would help him stay on track, avoid missing a "
    "commitment, or recover from drift. Never invent obligations. Never "
    "claim to have checked a source that was not included in the prompt.")
+  "Default standing instruction for chief-of-staff sessions and ticks.")
+
+(defcustom agent-chief-system-prompt agent-chief--default-system-prompt
   "Standing instruction for chief-of-staff sessions and ticks."
   :type 'string
   :group 'agent-chief)
@@ -383,27 +396,24 @@ conversationally in the agent buffer."
 (defun agent-chief--session-introduction ()
   "Return the initial prompt for an interactive chief session."
   (string-join
-   (delq nil
-         (list agent-chief-system-prompt
-               "This is your dedicated long-lived chief-of-staff session. Pablo may reply here normally during the day."
-               "Ask Pablo for today's plan now. After he replies, briefly restate the plan and say that you will use it for future heartbeat checks."
-               "If Pablo gives you a revised plan later, accept it conversationally. Durable plan updates should also be recorded via `agent-chief-set-day-plan` when he wants the explicit Org state updated."
-               "On heartbeat prompts, respond exactly `CHIEF_NO_NUDGE` when no nudge is warranted. Otherwise respond with `CHIEF_NUDGE: ` followed by one concise message."
-               (agent-chief--time-context)
-               (agent-chief--state-context)
-               (agent-chief--extra-context)))
+   (list
+    "Start chief-of-staff mode for this session."
+    "Ask me for today's plan in one short, normal sentence. Reply conversationally."
+    "After I answer, briefly restate the plan and use it for later heartbeat checks in this conversation.")
    "\n\n"))
 
 (defun agent-chief--session-heartbeat-prompt ()
   "Return the heartbeat prompt for the interactive chief session."
+  (agent-chief--normalize-system-prompt)
   (string-join
    (delq nil
          (list
+          agent-chief-system-prompt
           (format "[Chief-of-staff heartbeat: %s]"
                   (format-time-string "%Y-%m-%d %A %H:%M:%S %Z"))
           "Review the current day plan, explicit state, and this conversation."
-          "If Pablo should be nudged now, respond with `CHIEF_NUDGE: ` followed by one concise message."
-          "If no nudge is warranted, respond exactly `CHIEF_NO_NUDGE`."
+          "If Pablo should be nudged now, respond with `Nudge: ` followed by one concise message."
+          "If no nudge is warranted, respond exactly `No nudge.`"
           "Do not invent obligations; use only supplied state and conversation context."
           (agent-chief--state-context)
           (agent-chief--extra-context)))
@@ -451,13 +461,15 @@ conversationally in the agent buffer."
 (defun agent-chief--extract-session-reply (text)
   "Return a cons describing the chief heartbeat reply in TEXT."
   (let ((nudge-pos (agent-chief--last-match-position
-                    "CHIEF_NUDGE:[ \t]*\\([^\n\r]+\\)" text))
-        (quiet-pos (agent-chief--last-match-position "CHIEF_NO_NUDGE" text)))
+                    "\\(?:CHIEF_NUDGE\\|Nudge\\):[ \t]*\\([^\n\r]+\\)" text))
+        (quiet-pos (or (agent-chief--last-match-position "CHIEF_NO_NUDGE" text)
+                       (agent-chief--last-match-position "\\bNo nudge\\." text))))
     (cond
      ((and quiet-pos (or (not nudge-pos) (> quiet-pos nudge-pos)))
       (cons 'no-nudge nil))
      (nudge-pos
-      (string-match "CHIEF_NUDGE:[ \t]*\\([^\n\r]+\\)" text nudge-pos)
+      (string-match "\\(?:CHIEF_NUDGE\\|Nudge\\):[ \t]*\\([^\n\r]+\\)"
+                    text nudge-pos)
       (cons 'nudge (string-trim (match-string 1 text))))
      (t
       (cons 'unknown (string-trim text))))))
@@ -479,6 +491,7 @@ conversationally in the agent buffer."
 
 (defun agent-chief--build-prompt ()
   "Build the prompt for one chief-of-staff tick."
+  (agent-chief--normalize-system-prompt)
   (string-join
    (delq nil
          (list agent-chief-system-prompt
@@ -500,6 +513,12 @@ conversationally in the agent buffer."
    "characters. Leave state_update empty unless explicitly asked to draft "
    "a durable state note."))
 
+(defun agent-chief--normalize-system-prompt ()
+  "Replace stale JSON-oriented default prompt values in live sessions."
+  (when (equal agent-chief-system-prompt
+               agent-chief--legacy-json-system-prompt)
+    (setq agent-chief-system-prompt agent-chief--default-system-prompt)))
+
 (defun agent-chief--time-context ()
   "Return current time context for the chief-of-staff model."
   (format "Current time: %s\nTime zone: %s"
@@ -508,7 +527,10 @@ conversationally in the agent buffer."
 
 (defun agent-chief--state-context ()
   "Return state-file context for the chief-of-staff model."
-  (format "State file: %s\n\n%s"
+  (format (concat
+           "State file: %s\n"
+           "Only a Plan heading dated today is current; older Plan headings "
+           "are historical, not active obligations unless restated today.\n\n%s")
           agent-chief-state-file
           (or (agent-chief--read-state-file)
               "(state file is empty or missing)")))

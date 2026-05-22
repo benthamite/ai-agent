@@ -96,6 +96,31 @@
       (should (string-match-p "Calendar: write block at 10" prompt))
       (should (string-match-p "state file is empty or missing" prompt)))))
 
+(ert-deftest agent-chief-test-normalizes-legacy-json-system-prompt ()
+  "Replace the old JSON-only prompt when building current prompts."
+  (let ((agent-chief-system-prompt agent-chief--legacy-json-system-prompt)
+        (agent-chief-state-file "/tmp/missing-agent-chief-state"))
+    (let ((prompt (agent-chief--build-prompt)))
+      (should (equal agent-chief-system-prompt
+                     agent-chief--default-system-prompt))
+      (should (string-match-p "Return exactly this JSON shape" prompt))
+      (should-not (string-match-p "Return exactly one JSON object" prompt)))))
+
+(ert-deftest agent-chief-test-state-context-labels-old-plans-historical ()
+  "Tell the model not to treat stale plan headings as active obligations."
+  (let ((agent-chief-state-file (make-temp-file "agent-chief" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file agent-chief-state-file
+            (insert "* Plan 2026-05-20 [2026-05-20 Wed 18:54]\n\n"
+                    "make progress with bench-scraper by 19:00\n"))
+          (let ((context (agent-chief--state-context)))
+            (should (string-match-p "older Plan headings are historical"
+                                    context))
+            (should (string-match-p "bench-scraper" context))))
+      (when (file-exists-p agent-chief-state-file)
+        (delete-file agent-chief-state-file)))))
+
 (ert-deftest agent-chief-test-run-backend-dispatches-to-codex ()
   "Dispatch a chief tick to the Codex non-interactive runner."
   (let ((agent-chief-backend 'codex)
@@ -176,8 +201,10 @@
             (agent-chief-start-session))
           (should-not minibuffer-prompted)
           (should (equal (cadar submitted) started-buffer))
-          (should (string-match-p "Ask Pablo for today's plan"
-                                  (caar submitted))))
+          (should (string-match-p "Ask me for today's plan"
+                                  (caar submitted)))
+          (should-not (string-match-p "JSON" (caar submitted)))
+          (should-not (string-match-p "State file" (caar submitted))))
       (when (buffer-live-p started-buffer)
         (kill-buffer started-buffer)))))
 
@@ -254,6 +281,51 @@
           (should-not calls)
           (should-not agent-chief--session-awaiting-heartbeat)
           (should-not agent-chief--running))
+      (when (buffer-live-p agent-chief-session-buffer)
+        (kill-buffer agent-chief-session-buffer)))))
+
+(ert-deftest agent-chief-test-session-ready-suppresses-human-no-nudge ()
+  "Do not notify when the chief replies with the human no-nudge marker."
+  (let ((agent-chief-session-buffer (get-buffer-create "*chief-test*"))
+        (agent-chief--running t)
+        calls)
+    (unwind-protect
+        (with-current-buffer agent-chief-session-buffer
+          (erase-buffer)
+          (setq-local agent-chief--session-awaiting-heartbeat t)
+          (setq agent-chief--session-start-marker (copy-marker (point-min)))
+          (insert "No nudge.\n")
+          (let ((agent-chief-notify-function
+                 (lambda (&rest args) (push args calls))))
+            (agent-chief--handle-backend-event
+             (list :type 'notification
+                   :buffer-name (buffer-name agent-chief-session-buffer))))
+          (should-not calls)
+          (should-not agent-chief--session-awaiting-heartbeat)
+          (should-not agent-chief--running))
+      (when (buffer-live-p agent-chief-session-buffer)
+        (kill-buffer agent-chief-session-buffer)))))
+
+(ert-deftest agent-chief-test-session-ready-notifies-on-human-nudge ()
+  "Notify when the chief heartbeat response contains the human nudge marker."
+  (let ((agent-chief-session-buffer (get-buffer-create "*chief-test*"))
+        (agent-chief--running t)
+        calls)
+    (unwind-protect
+        (with-current-buffer agent-chief-session-buffer
+          (erase-buffer)
+          (setq-local agent-chief--session-awaiting-heartbeat t)
+          (setq agent-chief--session-start-marker (copy-marker (point-min)))
+          (insert "Nudge: Switch to the report now.\n")
+          (let ((agent-chief-notify-function
+                 (lambda (title message)
+                   (push (list title message) calls))))
+            (agent-chief--handle-backend-event
+             (list :type 'notification
+                   :buffer-name (buffer-name agent-chief-session-buffer))))
+          (should (equal calls
+                         '(("Chief of staff"
+                            "Switch to the report now.")))))
       (when (buffer-live-p agent-chief-session-buffer)
         (kill-buffer agent-chief-session-buffer)))))
 
