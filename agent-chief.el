@@ -25,8 +25,9 @@
 ;;; Commentary:
 
 ;; A small, inspectable chief-of-staff loop.  Emacs owns schedule,
-;; context, state, and notifications; Claude Code or Codex only
-;; evaluates whether to contact the user on each tick.
+;; state, and notifications.  In the default mode, Claude Code or
+;; Codex runs as an ordinary long-lived session that receives periodic
+;; heartbeat prompts and remains available for conversation.
 
 ;;; Code:
 
@@ -37,6 +38,12 @@
 
 (declare-function agent-claude--run-prompt "agent-claude" (prompt &rest kwargs))
 (declare-function agent-codex--run-prompt "agent-codex" (prompt &rest kwargs))
+(declare-function claude-code--directory "claude-code" ())
+(declare-function claude-code--prompt-for-instance-name
+                  "claude-code" (dir existing-instance-names &optional force-prompt))
+(declare-function codex--directory "codex" ())
+(declare-function codex--prompt-for-instance-name
+                  "codex" (dir existing-instance-names &optional force-prompt))
 (declare-function alert "alert")
 
 ;;;; Customization
@@ -51,14 +58,29 @@
                  (const :tag "Claude Code" claude-code))
   :group 'agent-chief)
 
+(defcustom agent-chief-mode 'session
+  "Chief-of-staff execution mode.
+When this is `session', `agent-chief-tick' submits heartbeat
+prompts to a long-lived Claude Code or Codex session.  When this
+is `stateless', each tick uses a one-shot non-interactive backend
+call and parses a JSON decision."
+  :type '(choice (const :tag "Interactive session" session)
+                 (const :tag "Stateless one-shot" stateless))
+  :group 'agent-chief)
+
 (defcustom agent-chief-interval 1800
   "Number of seconds between chief-of-staff ticks."
   :type 'integer
   :group 'agent-chief)
 
 (defcustom agent-chief-directory user-emacs-directory
-  "Working directory used for non-interactive agent runs."
+  "Working directory used for chief-of-staff agent sessions."
   :type 'directory
+  :group 'agent-chief)
+
+(defcustom agent-chief-session-instance-name "chief"
+  "Instance name used for the interactive chief-of-staff session."
+  :type 'string
   :group 'agent-chief)
 
 (defcustom agent-chief-state-file
@@ -94,13 +116,12 @@ perform externally visible actions."
 
 (defcustom agent-chief-system-prompt
   (concat
-   "You are Pablo's chief-of-staff agent. Your job is to decide whether "
-   "to contact him now based only on the supplied auditable context. Be "
-   "selective: contact him only when a timely nudge would help him stay "
-   "on track, avoid missing a commitment, or recover from drift. Never "
-   "invent obligations. Never claim to have checked a source that was not "
-   "included in the prompt. Return exactly one JSON object and no prose.")
-  "Standing instruction prepended to each chief-of-staff tick."
+   "You are Pablo's chief-of-staff agent. Your job is to help him follow "
+   "the plan he deliberately gives you. Be selective: contact him only "
+   "when a timely nudge would help him stay on track, avoid missing a "
+   "commitment, or recover from drift. Never invent obligations. Never "
+   "claim to have checked a source that was not included in the prompt.")
+  "Standing instruction for chief-of-staff sessions and ticks."
   :type 'string
   :group 'agent-chief)
 
@@ -115,6 +136,24 @@ perform externally visible actions."
 
 (defvar agent-chief--last-decision nil
   "Last parsed decision plist returned by the model.")
+
+(defvar agent-chief-session-buffer nil
+  "Active chief-of-staff session buffer, or nil.")
+
+(defvar agent-chief--last-session-response nil
+  "Last heartbeat response extracted from the chief session.")
+
+(defvar-local agent-chief--session-start-marker nil
+  "Marker for the start of the pending heartbeat response.")
+
+(defvar-local agent-chief--session-p nil
+  "Non-nil when this buffer is the chief-of-staff session.")
+
+(defvar-local agent-chief--session-awaiting-heartbeat nil
+  "Non-nil while this chief session is answering a heartbeat.")
+
+(defvar-local agent-chief--session-backend nil
+  "Backend symbol for this chief-of-staff session.")
 
 ;;;; Commands
 
@@ -133,6 +172,23 @@ seconds before the first tick."
   (message "Agent chief started; interval %ss" agent-chief-interval))
 
 ;;;###autoload
+(defun agent-chief-start-session (&optional plan)
+  "Start or reuse the interactive chief-of-staff session.
+When PLAN is nonempty, record it as today's plan and submit it to
+the session.  Interactively, prompt for PLAN."
+  (interactive
+   (list (let ((value (read-string "Day plan (empty to skip): ")))
+           (unless (string-empty-p (string-trim value)) value))))
+  (let ((buffer (agent-chief--ensure-session)))
+    (agent-chief--submit-to-session
+     (agent-chief--session-introduction)
+     buffer)
+    (when plan
+      (agent-chief-set-day-plan plan))
+    (agent-chief-start t)
+    (pop-to-buffer buffer)))
+
+;;;###autoload
 (defun agent-chief-stop ()
   "Stop the chief-of-staff loop."
   (interactive)
@@ -145,6 +201,15 @@ seconds before the first tick."
 (defun agent-chief-tick ()
   "Run one chief-of-staff check."
   (interactive)
+  (pcase agent-chief-mode
+    ('session (agent-chief-session-heartbeat))
+    ('stateless (agent-chief-stateless-tick))
+    (_ (user-error "Unsupported agent-chief mode: %S" agent-chief-mode))))
+
+;;;###autoload
+(defun agent-chief-stateless-tick ()
+  "Run one stateless chief-of-staff check."
+  (interactive)
   (if agent-chief--running
       (message "Agent chief tick skipped; previous tick still running")
     (setq agent-chief--running t)
@@ -153,6 +218,30 @@ seconds before the first tick."
      (lambda (result)
        (setq agent-chief--running nil)
        (agent-chief--handle-result result)))))
+
+;;;###autoload
+(defun agent-chief-session-heartbeat ()
+  "Submit one heartbeat to the interactive chief-of-staff session."
+  (interactive)
+  (if agent-chief--running
+      (message "Agent chief heartbeat skipped; previous heartbeat still running")
+    (let ((buffer (agent-chief--ensure-session)))
+      (setq agent-chief--running t)
+      (with-current-buffer buffer
+        (setq agent-chief--session-awaiting-heartbeat t)
+        (setq agent-chief--session-start-marker (copy-marker (point-max) t)))
+      (agent-chief--submit-to-session
+       (agent-chief--session-heartbeat-prompt)
+       buffer))))
+
+;;;###autoload
+(defun agent-chief-switch-to-session ()
+  "Switch to the active chief-of-staff session."
+  (interactive)
+  (let ((buffer (agent-chief--session-buffer)))
+    (unless buffer
+      (user-error "No active chief-of-staff session"))
+    (pop-to-buffer buffer)))
 
 ;;;###autoload
 (defun agent-chief-open-state ()
@@ -165,6 +254,9 @@ seconds before the first tick."
   "Append NOTE to `agent-chief-state-file'."
   (interactive "sChief note: ")
   (agent-chief--append-state-heading "Manual note" note)
+  (when (agent-chief--session-buffer)
+    (agent-chief--submit-to-session
+     (format "[Chief-of-staff note]\n\n%s" note)))
   (message "Agent chief note saved"))
 
 ;;;###autoload
@@ -174,7 +266,207 @@ seconds before the first tick."
   (agent-chief--append-state-heading
    (format "Plan %s" (format-time-string "%Y-%m-%d"))
    plan)
+  (when (agent-chief--session-buffer)
+    (agent-chief--submit-to-session
+     (format "[Chief-of-staff day plan]\n\n%s" plan)))
   (message "Agent chief day plan saved"))
+
+;;;; Interactive session
+
+(defun agent-chief--ensure-session ()
+  "Return a live chief-of-staff session buffer, starting one if needed."
+  (or (agent-chief--session-buffer)
+      (agent-chief--start-session-buffer)))
+
+(defun agent-chief--session-buffer ()
+  "Return the live chief-of-staff session buffer, or nil."
+  (when (buffer-live-p agent-chief-session-buffer)
+    agent-chief-session-buffer))
+
+(defun agent-chief--start-session-buffer ()
+  "Start and return a chief-of-staff session buffer."
+  (agent-chief--require-backend)
+  (or (agent-chief--find-session-buffer)
+      (progn
+        (agent-chief--call-backend-start)
+        (or (agent-chief--find-session-buffer)
+            (user-error "Could not find started chief-of-staff session")))))
+
+(defun agent-chief--require-backend ()
+  "Load the configured chief backend."
+  (pcase agent-chief-backend
+    ('codex (require 'agent-codex))
+    ('claude-code (require 'agent-claude))
+    (_ (user-error "Unsupported agent-chief backend: %S"
+                   agent-chief-backend))))
+
+(defun agent-chief--find-session-buffer ()
+  "Return the chief-of-staff session buffer for the configured backend."
+  (let ((buffer (cl-find-if
+                 #'agent-chief--session-buffer-p
+                 (agent-chief--backend-buffers))))
+    (when buffer
+      (agent-chief--mark-session-buffer buffer))
+    buffer))
+
+(defun agent-chief--backend-buffers ()
+  "Return buffers for `agent-chief-backend' in `agent-chief-directory'."
+  (when-let* ((fn (agent--backend-get agent-chief-backend
+                                      :find-buffers-for-dir)))
+    (funcall fn (file-name-as-directory
+                 (file-truename
+                  (expand-file-name agent-chief-directory))))))
+
+(defun agent-chief--session-buffer-p (buffer)
+  "Return non-nil when BUFFER is the configured chief session."
+  (and (buffer-live-p buffer)
+       (equal (agent-chief--buffer-instance buffer)
+              agent-chief-session-instance-name)))
+
+(defun agent-chief--buffer-instance (buffer)
+  "Return BUFFER's backend instance name."
+  (when-let* ((fn (agent--backend-get agent-chief-backend
+                                      :extract-instance-name)))
+    (funcall fn (buffer-name buffer))))
+
+(defun agent-chief--mark-session-buffer (buffer)
+  "Mark BUFFER as the active chief-of-staff session."
+  (setq agent-chief-session-buffer buffer)
+  (with-current-buffer buffer
+    (setq-local agent-chief--session-p t)
+    (setq-local agent-chief--session-backend agent-chief-backend))
+  buffer)
+
+(defun agent-chief--call-backend-start ()
+  "Start a backend session in `agent-chief-directory' with chief instance."
+  (pcase agent-chief-backend
+    ('codex (agent-chief--call-codex-start))
+    ('claude-code (agent-chief--call-claude-start))))
+
+(defun agent-chief--call-codex-start ()
+  "Start a Codex chief-of-staff session."
+  (let ((dir (file-name-as-directory
+              (file-truename
+               (expand-file-name agent-chief-directory))))
+        (instance agent-chief-session-instance-name))
+    (cl-letf (((symbol-function 'codex--directory) (lambda () dir))
+              ((symbol-function 'codex--prompt-for-instance-name)
+               (lambda (_dir _existing _force) instance)))
+      (funcall (agent--backend-get 'codex :start) nil nil nil t))))
+
+(defun agent-chief--call-claude-start ()
+  "Start a Claude Code chief-of-staff session."
+  (let ((dir (file-name-as-directory
+              (file-truename
+               (expand-file-name agent-chief-directory))))
+        (instance agent-chief-session-instance-name))
+    (cl-letf (((symbol-function 'claude-code--directory) (lambda () dir))
+              ((symbol-function 'claude-code--prompt-for-instance-name)
+               (lambda (_dir _existing _force) instance)))
+      (funcall (agent--backend-get 'claude-code :start) nil nil nil t))))
+
+(defun agent-chief--submit-to-session (prompt &optional buffer)
+  "Submit PROMPT to the chief-of-staff session BUFFER."
+  (let* ((target (or buffer (agent-chief--session-buffer)
+                     (agent-chief--ensure-session)))
+         (backend (buffer-local-value 'agent-chief--session-backend target))
+         (submit (agent--backend-get backend :submit-command)))
+    (unless submit
+      (user-error "Backend %S cannot submit chief prompts" backend))
+    (funcall submit prompt target)))
+
+(defun agent-chief--session-introduction ()
+  "Return the initial prompt for an interactive chief session."
+  (string-join
+   (delq nil
+         (list agent-chief-system-prompt
+               "This is your dedicated long-lived chief-of-staff session. Pablo may reply here normally during the day."
+               "On heartbeat prompts, respond exactly `CHIEF_NO_NUDGE` when no nudge is warranted. Otherwise respond with `CHIEF_NUDGE: ` followed by one concise message."
+               (agent-chief--time-context)
+               (agent-chief--state-context)
+               (agent-chief--extra-context)))
+   "\n\n"))
+
+(defun agent-chief--session-heartbeat-prompt ()
+  "Return the heartbeat prompt for the interactive chief session."
+  (string-join
+   (delq nil
+         (list
+          (format "[Chief-of-staff heartbeat: %s]"
+                  (format-time-string "%Y-%m-%d %A %H:%M:%S %Z"))
+          "Review the current day plan, explicit state, and this conversation."
+          "If Pablo should be nudged now, respond with `CHIEF_NUDGE: ` followed by one concise message."
+          "If no nudge is warranted, respond exactly `CHIEF_NO_NUDGE`."
+          "Do not invent obligations; use only supplied state and conversation context."
+          (agent-chief--state-context)
+          (agent-chief--extra-context)))
+   "\n\n"))
+
+(defun agent-chief--handle-backend-event (message)
+  "Handle backend MESSAGE for chief-of-staff session notifications."
+  (when (eq (plist-get message :type) 'notification)
+    (when-let* ((buffer-name (plist-get message :buffer-name))
+                (buffer (get-buffer buffer-name)))
+      (when (eq buffer (agent-chief--session-buffer))
+        (agent-chief--handle-session-ready buffer))))
+  nil)
+
+(defun agent-chief--handle-session-ready (buffer)
+  "Handle BUFFER becoming ready after a heartbeat."
+  (when (and (buffer-live-p buffer)
+             (buffer-local-value 'agent-chief--session-awaiting-heartbeat
+                                 buffer))
+    (with-current-buffer buffer
+      (setq agent-chief--session-awaiting-heartbeat nil)
+      (setq agent-chief--running nil)
+      (let* ((text (agent-chief--session-response-text buffer))
+             (reply (agent-chief--extract-session-reply text)))
+        (setq agent-chief--last-session-response reply)
+        (pcase (car reply)
+          ('no-nudge nil)
+          ('nudge
+           (funcall agent-chief-notify-function
+                    "Chief of staff"
+                    (cdr reply)))
+          (_
+           (funcall agent-chief-notify-function
+                    "Chief of staff"
+                    (agent-chief--truncate-message text))))))))
+
+(defun agent-chief--session-response-text (buffer)
+  "Return text inserted in BUFFER since the pending heartbeat started."
+  (with-current-buffer buffer
+    (let ((start (if (markerp agent-chief--session-start-marker)
+                     (marker-position agent-chief--session-start-marker)
+                   (point-min))))
+      (buffer-substring-no-properties start (point-max)))))
+
+(defun agent-chief--extract-session-reply (text)
+  "Return a cons describing the chief heartbeat reply in TEXT."
+  (let ((nudge-pos (agent-chief--last-match-position
+                    "CHIEF_NUDGE:[ \t]*\\([^\n\r]+\\)" text))
+        (quiet-pos (agent-chief--last-match-position "CHIEF_NO_NUDGE" text)))
+    (cond
+     ((and quiet-pos (or (not nudge-pos) (> quiet-pos nudge-pos)))
+      (cons 'no-nudge nil))
+     (nudge-pos
+      (string-match "CHIEF_NUDGE:[ \t]*\\([^\n\r]+\\)" text nudge-pos)
+      (cons 'nudge (string-trim (match-string 1 text))))
+     (t
+      (cons 'unknown (string-trim text))))))
+
+(defun agent-chief--last-match-position (regexp text)
+  "Return the last match position for REGEXP in TEXT, or nil."
+  (let ((pos 0)
+        last)
+    (while (setq pos (string-match regexp text pos))
+      (setq last pos)
+      (setq pos (match-end 0)))
+    last))
+
+(defun agent-chief--truncate-message (text)
+  "Return TEXT shortened for notification display."
+  (truncate-string-to-width (string-trim text) 700 nil nil "..."))
 
 ;;;; Prompt construction
 
@@ -377,6 +669,12 @@ seconds before the first tick."
   (message "%s: %s" title message)
   (when (and (require 'alert nil t) (fboundp 'alert))
     (alert message :title title)))
+
+(with-eval-after-load 'agent-codex
+  (add-hook 'codex-event-hook #'agent-chief--handle-backend-event))
+
+(with-eval-after-load 'agent-claude
+  (add-hook 'claude-code-event-hook #'agent-chief--handle-backend-event))
 
 ;;;; Provide
 

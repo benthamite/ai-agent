@@ -138,23 +138,27 @@ The Slack-message routing options, ~agent-claude-act-on-slack-message-model~, ~a
 :END:
 
 #+vindex: agent-chief-backend
+#+vindex: agent-chief-mode
 #+vindex: agent-chief-interval
 #+vindex: agent-chief-directory
+#+vindex: agent-chief-session-instance-name
 #+vindex: agent-chief-state-file
 #+vindex: agent-chief-context-functions
 #+vindex: agent-chief-state-max-chars
 #+vindex: agent-chief-max-turns
 #+vindex: agent-chief-notify-function
 #+vindex: agent-chief-system-prompt
-The optional =agent-chief= module runs a periodic, auditable chief-of-staff check. Emacs owns the schedule and state; the selected backend only receives a bounded prompt and returns a JSON decision saying whether to notify the user now.
+The optional =agent-chief= module runs a periodic, auditable chief-of-staff workflow. Emacs owns the schedule, explicit state, and notifications. In the default =session= mode, the selected backend is an ordinary long-lived Claude Code or Codex session that receives heartbeat prompts and remains available for normal conversation.
 
-~agent-chief-backend~ selects =codex= or =claude-code=. ~agent-chief-interval~ controls the timer interval in seconds. ~agent-chief-directory~ is the working directory for the non-interactive backend call. ~agent-chief-state-file~ is an Org file used as the durable, inspectable state store; =agent-chief= never writes opaque memory.
+~agent-chief-backend~ selects =codex= or =claude-code=. ~agent-chief-mode~ defaults to =session=; set it to =stateless= to use the older one-shot JSON-decision path. ~agent-chief-interval~ controls the timer interval in seconds. ~agent-chief-directory~ is the working directory for chief sessions and one-shot calls. ~agent-chief-session-instance-name~ defaults to =chief= and is used as the instance name for the dedicated interactive session.
+
+~agent-chief-state-file~ is an Org file used as the durable, inspectable state store; =agent-chief= never writes opaque memory. Day plans and manual notes are appended there and, when a chief session is live, submitted into that session as conversational context.
 
 ~agent-chief-context-functions~ is the extension point for agenda, task, calendar, project, or custom status snippets. Each function is called with no arguments and should return a string. Nil and empty strings are ignored. The state file is included separately, truncated to ~agent-chief-state-max-chars~ characters. ~agent-chief-max-turns~ limits Claude Code ticks; Codex ticks use the existing =codex exec= settings from =agent-codex=.
 
-~agent-chief-notify-function~ receives a title and message when the model decides that a nudge is warranted. The default function logs the message and uses =alert.el= when available. ~agent-chief-system-prompt~ is the standing instruction that makes the loop selective and forbids inventing obligations not present in the supplied context.
+In session mode, heartbeat prompts ask the model to respond exactly =CHIEF_NO_NUDGE= when no contact is warranted, or =CHIEF_NUDGE: MESSAGE= when it should alert the user. The backend's ordinary notification event tells =agent-chief= when the response is complete; =agent-chief= then inspects the session text since the heartbeat and calls ~agent-chief-notify-function~ only for a nudge. The default notification function logs the message and uses =alert.el= when available. ~agent-chief-system-prompt~ is the standing instruction that makes the loop selective and forbids inventing obligations not present in the supplied context.
 
-Backend output may include echoed CLI transcript text before the answer. The chief loop scans that output and uses the last valid JSON object with a =notify= field as the decision, so echoed response-schema examples do not confuse the parser.
+In stateless mode, backend output may include echoed CLI transcript text before the answer. The chief loop scans that output and uses the last valid JSON object with a =notify= field as the decision, so echoed response-schema examples do not confuse the parser.
 
 * Commands
 :PROPERTIES:
@@ -233,14 +237,20 @@ again. Codex delegates this to =codex.el='s target-buffer submit helper.
 :END:
 
 #+findex: agent-chief-start
+#+findex: agent-chief-start-session
 #+findex: agent-chief-stop
 #+findex: agent-chief-tick
+#+findex: agent-chief-stateless-tick
+#+findex: agent-chief-session-heartbeat
+#+findex: agent-chief-switch-to-session
 #+findex: agent-chief-open-state
 #+findex: agent-chief-add-note
 #+findex: agent-chief-set-day-plan
-The command ~agent-chief-start~ starts a repeating Emacs timer. Without a prefix argument it also schedules an immediate tick; with a prefix argument, it waits ~agent-chief-interval~ seconds before the first tick. ~agent-chief-stop~ cancels the timer, and ~agent-chief-tick~ runs one check manually.
+The command ~agent-chief-start-session~ starts or reuses a dedicated Claude Code or Codex session using ~agent-chief-session-instance-name~, optionally records a day plan, sends the chief-of-staff operating contract into the session, and starts the heartbeat timer. The command ~agent-chief-switch-to-session~ jumps back to that session so the user can reply normally.
 
-The command ~agent-chief-open-state~ opens the auditable Org state file. ~agent-chief-add-note~ appends a manual note, and ~agent-chief-set-day-plan~ appends today's plan. These commands are intentionally simple: the durable source of truth remains ordinary text that can be reviewed, edited, and audited outside the model.
+The command ~agent-chief-start~ starts only the repeating Emacs timer. Without a prefix argument it also schedules an immediate tick; with a prefix argument, it waits ~agent-chief-interval~ seconds before the first tick. ~agent-chief-stop~ cancels the timer. ~agent-chief-tick~ runs one check using ~agent-chief-mode~. ~agent-chief-session-heartbeat~ forces a session-mode heartbeat, while ~agent-chief-stateless-tick~ forces one stateless JSON-decision check.
+
+The command ~agent-chief-open-state~ opens the auditable Org state file. ~agent-chief-add-note~ appends a manual note, and ~agent-chief-set-day-plan~ appends today's plan. When a chief session is active, both commands also submit the new context into that session. These commands are intentionally simple: the durable source of truth remains ordinary text that can be reviewed, edited, and audited outside the model.
 
 ** Claude Code commands
 :PROPERTIES:

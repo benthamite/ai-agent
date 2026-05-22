@@ -6,6 +6,16 @@
 (require 'cl-lib)
 (require 'agent-chief)
 
+(defun agent-chief-test--backend (&rest keys)
+  "Return a minimal valid backend plist extended with KEYS."
+  (append
+   keys
+   (list :buffer-p (lambda (_buffer) nil)
+         :find-all-buffers (lambda () nil)
+         :extract-instance-name (lambda (_buffer-name) nil)
+         :start-new #'ignore
+         :label "Test")))
+
 (ert-deftest agent-chief-test-extract-json-from-fenced-output ()
   "Extract a JSON object from fenced model output."
   (should
@@ -83,6 +93,114 @@
       (agent-chief--run-backend "Prompt" #'ignore)
       (should (equal (car called) "Prompt"))
       (should (equal (plist-get (cadr called) :dir) "/tmp/")))))
+
+(ert-deftest agent-chief-test-session-heartbeat-submits-to-chief-buffer ()
+  "Submit heartbeat prompts to the configured chief session."
+  (let ((agent-backends nil)
+        (agent-chief-backend 'codex)
+        (agent-chief-directory "/tmp/")
+        (agent-chief-session-buffer nil)
+        (agent-chief--running nil)
+        started-buffer
+        submitted)
+    (unwind-protect
+        (progn
+          (agent-register-backend
+           'codex
+           (agent-chief-test--backend
+            :find-buffers-for-dir (lambda (_dir)
+                                    (and started-buffer
+                                         (list started-buffer)))
+            :extract-instance-name (lambda (_name) "chief")
+            :start (lambda (&rest _args)
+                     (setq started-buffer
+                           (get-buffer-create "*codex:/tmp/:chief*")))
+            :submit-command (lambda (prompt buffer)
+                              (setq submitted (list prompt buffer)))))
+          (cl-letf (((symbol-function 'require) #'ignore))
+            (agent-chief-session-heartbeat))
+          (should (eq (cadr submitted) started-buffer))
+          (should (string-match-p "Chief-of-staff heartbeat" (car submitted)))
+          (with-current-buffer started-buffer
+            (should agent-chief--session-awaiting-heartbeat)))
+      (when (buffer-live-p started-buffer)
+        (kill-buffer started-buffer)))))
+
+(ert-deftest agent-chief-test-set-day-plan-forwards-to-session ()
+  "Record the day plan and submit it to the live chief session."
+  (let ((agent-backends nil)
+        (agent-chief-backend 'codex)
+        (agent-chief-state-file (make-temp-file "agent-chief" nil ".org"))
+        (agent-chief-session-buffer (get-buffer-create "*chief-test*"))
+        submitted)
+    (unwind-protect
+        (progn
+          (agent-register-backend
+           'codex
+           (agent-chief-test--backend
+            :submit-command (lambda (prompt buffer)
+                              (setq submitted (list prompt buffer)))))
+          (with-current-buffer agent-chief-session-buffer
+            (setq-local agent-chief--session-backend 'codex))
+          (agent-chief-set-day-plan "Write the report by 15:00")
+          (should (equal (cadr submitted) agent-chief-session-buffer))
+          (should (string-match-p "Write the report" (car submitted)))
+          (with-temp-buffer
+            (insert-file-contents agent-chief-state-file)
+            (should (string-match-p "Write the report" (buffer-string)))))
+      (when (buffer-live-p agent-chief-session-buffer)
+        (kill-buffer agent-chief-session-buffer))
+      (when (file-exists-p agent-chief-state-file)
+        (delete-file agent-chief-state-file)))))
+
+(ert-deftest agent-chief-test-session-ready-notifies-on-nudge ()
+  "Notify when a chief heartbeat response contains a nudge marker."
+  (let ((agent-chief-session-buffer (get-buffer-create "*chief-test*"))
+        (agent-chief--running t)
+        calls)
+    (unwind-protect
+        (with-current-buffer agent-chief-session-buffer
+          (erase-buffer)
+          (setq-local agent-chief--session-awaiting-heartbeat t)
+          (setq agent-chief--session-start-marker (copy-marker (point-min)))
+          (insert "prompt says CHIEF_NO_NUDGE\n")
+          (insert "CHIEF_NUDGE: Switch to the report now.\n")
+          (let ((agent-chief-notify-function
+                 (lambda (title message)
+                   (push (list title message) calls))))
+            (agent-chief--handle-backend-event
+             (list :type 'notification
+                   :buffer-name (buffer-name agent-chief-session-buffer))))
+          (should (equal calls
+                         '(("Chief of staff"
+                            "Switch to the report now."))))
+          (should-not agent-chief--session-awaiting-heartbeat)
+          (should-not agent-chief--running))
+      (when (buffer-live-p agent-chief-session-buffer)
+        (kill-buffer agent-chief-session-buffer)))))
+
+(ert-deftest agent-chief-test-session-ready-suppresses-no-nudge ()
+  "Do not notify when the last chief marker is CHIEF_NO_NUDGE."
+  (let ((agent-chief-session-buffer (get-buffer-create "*chief-test*"))
+        (agent-chief--running t)
+        calls)
+    (unwind-protect
+        (with-current-buffer agent-chief-session-buffer
+          (erase-buffer)
+          (setq-local agent-chief--session-awaiting-heartbeat t)
+          (setq agent-chief--session-start-marker (copy-marker (point-min)))
+          (insert "prompt says CHIEF_NUDGE: example\n")
+          (insert "CHIEF_NO_NUDGE\n")
+          (let ((agent-chief-notify-function
+                 (lambda (&rest args) (push args calls))))
+            (agent-chief--handle-backend-event
+             (list :type 'notification
+                   :buffer-name (buffer-name agent-chief-session-buffer))))
+          (should-not calls)
+          (should-not agent-chief--session-awaiting-heartbeat)
+          (should-not agent-chief--running))
+      (when (buffer-live-p agent-chief-session-buffer)
+        (kill-buffer agent-chief-session-buffer)))))
 
 (ert-deftest agent-chief-test-start-replaces-existing-timer ()
   "Starting the loop cancels any existing chief timer."
