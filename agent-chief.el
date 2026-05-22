@@ -114,6 +114,15 @@ perform externally visible actions."
   :type 'function
   :group 'agent-chief)
 
+(defcustom agent-chief-record-model-state-updates nil
+  "When non-nil, append stateless model state updates to the state file.
+This is disabled by default because periodic model observations are
+not durable user-approved memory.  Plans and notes should normally
+enter the state file through `agent-chief-set-day-plan' and
+`agent-chief-add-note'."
+  :type 'boolean
+  :group 'agent-chief)
+
 (defcustom agent-chief-system-prompt
   (concat
    "You are Pablo's chief-of-staff agent. Your job is to help him follow "
@@ -488,7 +497,8 @@ conversationally in the agent buffer."
    "\"message\":\"concise message to Pablo\","
    "\"state_update\":\"optional durable note or empty string\"}\n"
    "Use notify=false when no contact is warranted. Keep message under 700 "
-   "characters. Put only auditable durable observations in state_update."))
+   "characters. Leave state_update empty unless explicitly asked to draft "
+   "a durable state note."))
 
 (defun agent-chief--time-context ()
   "Return current time context for the chief-of-staff model."
@@ -572,8 +582,10 @@ conversationally in the agent buffer."
 (defun agent-chief--handle-decision (decision)
   "Apply parsed chief-of-staff DECISION."
   (setq agent-chief--last-decision decision)
-  (when-let* ((state-update (plist-get decision :state_update)))
-    (unless (string-empty-p (string-trim state-update))
+  (when-let* ((state-update (and agent-chief-record-model-state-updates
+                                 (plist-get decision :state_update))))
+    (unless (or (not (stringp state-update))
+                (string-empty-p (string-trim state-update)))
       (agent-chief--append-state-heading "Model state update" state-update)))
   (when (agent-chief--truthy-p (plist-get decision :notify))
     (funcall agent-chief-notify-function

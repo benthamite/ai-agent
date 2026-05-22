@@ -48,8 +48,8 @@
   (should-error
    (agent-chief--parse-decision "{\"message\":\"hi\"}")))
 
-(ert-deftest agent-chief-test-handle-decision-notifies-and-records-state ()
-  "Notify and append state updates when requested by DECISION."
+(ert-deftest agent-chief-test-handle-decision-notifies-without-recording-state ()
+  "Notify but do not persist model state updates by default."
   (let ((agent-chief-state-file (make-temp-file "agent-chief" nil ".org"))
         (calls nil))
     (unwind-protect
@@ -63,6 +63,21 @@
                :message "Start the planned review."
                :state_update "Pablo should start with review.")))
           (should (equal calls '(("Focus" "Start the planned review."))))
+          (should (zerop (nth 7 (file-attributes agent-chief-state-file)))))
+      (when (file-exists-p agent-chief-state-file)
+        (delete-file agent-chief-state-file)))))
+
+(ert-deftest agent-chief-test-handle-decision-records-state-when-enabled ()
+  "Append model state updates only when explicitly enabled."
+  (let ((agent-chief-state-file (make-temp-file "agent-chief" nil ".org"))
+        (agent-chief-record-model-state-updates t))
+    (unwind-protect
+        (progn
+          (agent-chief--handle-decision
+           '(:notify :false
+             :title ""
+             :message ""
+             :state_update "Pablo should start with review."))
           (with-temp-buffer
             (insert-file-contents agent-chief-state-file)
             (should (string-match-p "Model state update" (buffer-string)))

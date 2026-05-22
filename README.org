@@ -147,12 +147,15 @@ The Slack-message routing options, ~agent-claude-act-on-slack-message-model~, ~a
 #+vindex: agent-chief-state-max-chars
 #+vindex: agent-chief-max-turns
 #+vindex: agent-chief-notify-function
+#+vindex: agent-chief-record-model-state-updates
 #+vindex: agent-chief-system-prompt
 The optional =agent-chief= module runs a periodic, auditable chief-of-staff workflow. Emacs owns the schedule, explicit state, and notifications. In the default =session= mode, the selected backend is an ordinary long-lived Claude Code or Codex session that receives heartbeat prompts and remains available for normal conversation.
 
 ~agent-chief-backend~ selects =codex= or =claude-code=. ~agent-chief-mode~ defaults to =session=; set it to =stateless= to use the older one-shot JSON-decision path. ~agent-chief-interval~ controls the timer interval in seconds. ~agent-chief-directory~ is the working directory for chief sessions and one-shot calls. ~agent-chief-session-instance-name~ defaults to =chief= and is used as the instance name for the dedicated interactive session.
 
 ~agent-chief-state-file~ is an Org file used as the durable, inspectable state store; =agent-chief= never writes opaque memory. Day plans and manual notes are appended there and, when a chief session is live, submitted into that session as conversational context.
+
+~agent-chief-record-model-state-updates~ controls whether model-proposed state updates from stateless ticks are appended to the state file. It defaults to nil because periodic model observations are not user-approved durable memory. Use explicit notes and day plans for ordinary state updates.
 
 ~agent-chief-context-functions~ is the extension point for agenda, task, calendar, project, or custom status snippets. Each function is called with no arguments and should return a string. Nil and empty strings are ignored. The state file is included separately, truncated to ~agent-chief-state-max-chars~ characters. ~agent-chief-max-turns~ limits Claude Code ticks; Codex ticks use the existing =codex exec= settings from =agent-codex=.
 
