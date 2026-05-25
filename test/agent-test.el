@@ -73,75 +73,40 @@
 
 ;;;; Epoch project registry
 
-(ert-deftest agent-test-epoch-projects-from-json-prefers-project-directory ()
-  "Prefer canonical project directories over nested local repos."
+(ert-deftest agent-test-epoch-project-candidates-read-project-registry ()
+  "Read candidates from the canonical project registry schema."
   (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
-         (repo (expand-file-name "digest/repo" root))
-         (agent-epoch-projects-root root))
+         (registry (expand-file-name "project_registry.json" root))
+         (project-dir (expand-file-name "slack-emoji-to-asana" root))
+         (repo-dir (expand-file-name "repo" project-dir))
+         (agent-epoch-projects-root root)
+         (agent-epoch-project-registry-file registry))
     (unwind-protect
         (progn
-          (make-directory repo t)
-          (let* ((json (json-serialize
-                        `((projects . [((id . "ai-productivity-digest")
-                                         (title . "AI productivity digest")
-                                         (summary . "Daily Slack digest")
-                                         (local_repo_path . ,repo)
-                                         (project_doc_path
-                                          . "ai-productivity-digest/ai-productivity-digest.org")
-                                         (output_destinations
-                                          . ["#ai-productivity-digest"])
-                                         (internal_notes
-                                          . ((comments . "Posts to Slack")))
-                                         (source . nil))]))))
-                 (project (car (agent--epoch-projects-from-json json))))
-            (should (equal (plist-get project :id)
-                           "ai-productivity-digest"))
+          (make-directory repo-dir t)
+          (with-temp-file registry
+            (insert (json-serialize
+                     '((schema_version . 1)
+                       (projects
+                        . [((id . "slack-emoji-to-asana")
+                             (title . "Slack Emoji To Asana")
+                             (aliases . ["slack-emoji-to-asana"
+                                         "slack emoji to asana"])
+                             (browser_keywords . ["slack-emoji-to-asana"])
+                             (project_doc_paths . [])
+                             (repo_paths . ["slack-emoji-to-asana/repo"])
+                             (slack_channels . []))])))))
+          (let* ((projects (agent-epoch-project-candidates))
+                 (project (cl-find "slack-emoji-to-asana" projects
+                                   :key (lambda (item)
+                                          (plist-get item :id))
+                                   :test #'string=)))
+            (should project)
             (should (equal (plist-get project :directory)
-                           (expand-file-name "ai-productivity-digest/" root)))
-            (should (equal (plist-get project :outputs)
-                           "#ai-productivity-digest"))))
-      (delete-directory root t))))
-
-(ert-deftest agent-test-epoch-projects-from-json-falls-back-to-repo ()
-  "Use a local repo path when no canonical project doc is available."
-  (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
-         (repo (expand-file-name "digest/repo" root))
-         (agent-epoch-projects-root root))
-    (unwind-protect
-        (progn
-          (make-directory repo t)
-          (let* ((json (json-serialize
-                        `((projects . [((id . "ai-productivity-digest")
-                                         (title . "AI productivity digest")
-                                         (summary . "Daily Slack digest")
-                                         (local_repo_path . ,repo)
-                                         (project_doc_path . :null)
-                                         (output_destinations . [])
-                                         (internal_notes . nil)
-                                         (source . nil))]))))
-                 (project (car (agent--epoch-projects-from-json json))))
-            (should (equal (plist-get project :directory) repo))))
-      (delete-directory root t))))
-
-(ert-deftest agent-test-epoch-projects-from-json-handles-null-repo ()
-  "Use project docs when the canonical registry has a null repo path."
-  (let* ((root (file-name-as-directory (make-temp-file "agent-projects" t)))
-         (agent-epoch-projects-root root))
-    (unwind-protect
-        (let* ((json (json-serialize
-                      '((projects . [((id . "automation-progress")
-                                       (title . "Automation progress")
-                                       (summary . "Metrics")
-                                       (local_repo_path . :null)
-                                       (project_doc_path
-                                        . "automation-progress/automation-progress.org")
-                                       (output_destinations . [])
-                                       (internal_notes . nil)
-                                       (source . nil))]))))
-               (project (car (agent--epoch-projects-from-json json))))
-          (should (equal (plist-get project :directory)
-                         (expand-file-name "automation-progress/" root)))
-          (should-not (plist-get project :repo)))
+                           (file-name-as-directory project-dir)))
+            (should (equal (plist-get project :repo)
+                           "slack-emoji-to-asana/repo"))
+            (should-not (plist-get project :doc))))
       (delete-directory root t))))
 
 (ert-deftest agent-test-ordered-epoch-project-candidates-puts-model-first ()

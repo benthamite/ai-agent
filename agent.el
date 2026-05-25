@@ -250,9 +250,13 @@ that function is available."
   :type 'file
   :group 'agent)
 
+(defconst agent--epoch-project-registry-file-default
+  "/Users/pablostafforini/My Drive/Epoch/projects/time-tracker/repo/data/project_registry.json"
+  "Default canonical Epoch project registry file.")
+
 (defcustom agent-epoch-project-registry-file
-  "/Users/pablostafforini/My Drive/Epoch/projects/automations-dashboard/repo/data/automations.json"
-  "JSON registry of canonical Epoch automation projects."
+  agent--epoch-project-registry-file-default
+  "JSON registry of canonical Epoch projects."
   :type 'file
   :group 'agent)
 
@@ -1773,43 +1777,50 @@ called with the selected project plist and Slack URL."
   (let* ((data (json-parse-string json :object-type 'alist
                                   :array-type 'list))
          (projects (alist-get 'projects data)))
-    (mapcar #'agent--epoch-project-from-alist projects)))
+    (mapcar #'agent--epoch-project-from-project-registry projects)))
 
-(defun agent--epoch-project-from-alist (project)
-  "Return an internal project plist from PROJECT alist."
-  (let ((notes (alist-get 'internal_notes project))
-        (source (alist-get 'source project)))
+(defun agent--epoch-project-from-project-registry (project)
+  "Return an internal project plist from canonical PROJECT registry entry."
+  (let* ((repo (car (agent--json-list (alist-get 'repo_paths project))))
+         (doc (car (agent--json-list (alist-get 'project_doc_paths project)))))
     (list :id (alist-get 'id project)
           :title (alist-get 'title project)
-          :summary (alist-get 'summary project)
-          :comments (alist-get 'comments notes)
+          :summary (agent--epoch-project-registry-summary project)
+          :comments (agent--epoch-project-registry-notes project)
           :outputs (string-join
-                    (agent--json-list (alist-get 'output_destinations project))
+                    (agent--json-list (alist-get 'slack_channels project))
                     ", ")
-          :directory (agent--epoch-project-directory project source)
-          :repo (agent--json-string (alist-get 'local_repo_path project))
-          :doc (agent--json-string (alist-get 'project_doc_path project)))))
+          :directory (agent--epoch-project-directory-from-paths doc repo)
+          :repo repo
+          :doc doc)))
 
-(defun agent--epoch-project-directory (project source)
-  "Return the best local working directory for PROJECT and SOURCE."
-  (let ((doc (agent--epoch-project-path
-              (or (agent--json-string (alist-get 'project_doc_path project))
-                  (agent--json-string (alist-get 'project_doc source)))))
-        (repo (agent--epoch-project-path
-               (agent--json-string (alist-get 'local_repo_path project)))))
-    (cond
-     (doc (file-name-directory doc))
-     ((and repo (file-directory-p repo)) repo)
-     (t agent-epoch-projects-root))))
+(defun agent--epoch-project-registry-summary (project)
+  "Return a compact summary for canonical PROJECT registry entry."
+  (or (alist-get 'summary project)
+      (let ((aliases (agent--json-list (alist-get 'aliases project))))
+        (if aliases
+            (format "Aliases: %s" (string-join aliases ", "))
+          ""))))
+
+(defun agent--epoch-project-registry-notes (project)
+  "Return matching notes for canonical PROJECT registry entry."
+  (let ((keywords (agent--json-list (alist-get 'browser_keywords project))))
+    (if keywords
+        (format "keywords: %s" (string-join keywords ", "))
+      "")))
+
+(defun agent--epoch-project-directory-from-paths (doc repo)
+  "Return the best local working directory for relative DOC and REPO paths."
+  (cond
+   (doc (file-name-directory (agent--epoch-project-path doc)))
+   (repo (file-name-directory
+          (directory-file-name (agent--epoch-project-path repo))))
+   (t agent-epoch-projects-root)))
 
 (defun agent--epoch-project-path (path)
   "Return PATH expanded relative to `agent-epoch-projects-root'."
   (when path
     (expand-file-name path agent-epoch-projects-root)))
-
-(defun agent--json-string (value)
-  "Return VALUE when it is a string, otherwise nil."
-  (and (stringp value) value))
 
 (defun agent--json-list (value)
   "Return VALUE when it is a list, otherwise nil."

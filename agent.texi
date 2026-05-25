@@ -107,7 +107,7 @@ The user option @code{agent-alert-on-ready} is a boolean that defaults to @code{
 
 The user option @code{agent-backtrace-file} controls where @code{agent-save-backtrace}, @code{agent-claude-debug-backtrace}, and @code{agent-codex-debug-backtrace} write Emacs backtraces. It defaults to a file in @code{temporary-file-directory}.
 
-The user options @code{agent-epoch-project-registry-file} and @code{agent-epoch-projects-root} configure Slack-message project routing. The default registry is the generated @samp{automations-dashboard/repo/data/automations.json} file, which is consumed by the Epoch automations dashboard and points back to the canonical project Org metadata.
+The user options @code{agent-epoch-project-registry-file} and @code{agent-epoch-projects-root} configure Slack-message project routing. The default registry is the canonical tracked project registry at @samp{time-tracker/repo/data/project_registry.json}. It contains the shared Epoch project taxonomy used for project matching.
 
 The user option @code{agent-prompt-capture-directory} controls where @code{agent-capture-prompt} stores per-session Org files. Each file is keyed by backend, account, project directory, and session instance, so prompts are linked to the session they target and remain available after Emacs restarts. @code{agent-prompt-capture-auto-save-delay} controls the idle delay before capture buffers are saved automatically.
 
