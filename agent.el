@@ -251,7 +251,7 @@ that function is available."
   :group 'agent)
 
 (defconst agent--epoch-project-registry-file-default
-  "/Users/pablostafforini/My Drive/Epoch/projects/time-tracker/repo/data/project_registry.json"
+  "/Users/pablostafforini/My Drive/Epoch/projects/shared/project-registry.json"
   "Default canonical Epoch project registry file.")
 
 (defcustom agent-epoch-project-registry-file
